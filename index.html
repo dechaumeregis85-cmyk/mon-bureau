@@ -30,6 +30,12 @@ input,select{min-height:50px;border:1px solid #99aaa1;border-radius:6px;padding:
 .tag{display:inline-block;font-size:14px;font-weight:600;padding:4px 9px;border-radius:5px;background:#edf1eb}
 .urgent{background:var(--warnbg);color:var(--warn)}
 .wait{background:var(--waitbg);color:var(--wait)}
+.oktag{background:#dcefe2;color:#17664f}
+.infotag{background:#dbe7f3;color:#1c4b78}
+.greytag{background:#e8eae7;color:#4b5750}
+.doss{border-top:1px solid var(--line);padding:14px 0}
+.doss:first-child{border-top:0}
+.doss h3{margin:6px 0 4px;font-size:19px}
 .sub{font-size:16px;color:var(--muted)}
 .tabs button[aria-pressed=true]{background:#dcebe1;border-color:var(--green)}
 .actions button{font-size:16px}
@@ -51,6 +57,11 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
 </header>
 <main>
   <div id="err" class="msg err hide"></div>
+
+  <nav class="card row hide" id="nav" style="gap:8px;padding:10px">
+    <button type="button" data-s="today" class="primary">Ma journée</button>
+    <button type="button" data-s="dossiers">Mes dossiers</button>
+  </nav>
 
   <section id="intro" class="card">
     <p><strong>Version de test.</strong> Cette page lit et écrit tes tâches dans le dossier de l’application, sur ton OneDrive. Rien n’est envoyé ailleurs.</p>
@@ -76,6 +87,16 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <div class="card" id="list"></div>
     <p class="state" id="updated"></p>
   </section>
+
+  <section id="dossiers" class="hide">
+    <div class="card">
+      <label for="q">Rechercher un dossier</label>
+      <input id="q" placeholder="Nom du client ou commune" autocomplete="off">
+      <p class="state" id="dcount" style="margin-top:10px"></p>
+    </div>
+    <div class="card" id="dlist"></div>
+    <p class="state">Dossiers repris de ton fichier « Suivi des devis ». Ils sont en lecture seule pour l’instant. Ton fichier Excel n’a pas été modifié.</p>
+  </section>
 </main>
 <footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
 
@@ -89,9 +110,10 @@ var SCOPES="openid profile offline_access https://graph.microsoft.com/User.Read 
 var AUTH="https://login.microsoftonline.com/"+TENANT+"/oauth2/v2.0";
 var GRAPH="https://graph.microsoft.com/v1.0";
 var FILEPATH="/me/drive/special/approot:/mon-bureau/data.json";
+var DOSSPATH="/me/drive/special/approot:/mon-bureau/dossiers.json";
 var LS_REFRESH="monbureau.refresh",LS_DATA="monbureau.cache",SS="monbureau.pkce";
 var $=function(s){return document.querySelector(s)};
-var data={version:1,tasks:[]},filter="todo",token=null,tokenExp=0;
+var data={version:1,tasks:[]},dossiers=[],ecran="today",filter="todo",token=null,tokenExp=0;
 
 var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg"};
 function showMsg(kind,txt,target){
@@ -207,6 +229,105 @@ function render(){
     });
   });
 }
+function frDateCourt(iso){
+  if(!iso)return"—";
+  var d=new Date(iso+"T12:00:00");
+  return d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+function montantTexte(m){
+  if(m===null||m===undefined||m==="")return null;
+  var n=Number(m);
+  if(isNaN(n))return null;
+  return n.toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" € HT";
+}
+function classeStatut(s){
+  if(s==="Accepté")return"oktag";
+  if(s==="Refusé")return"greytag";
+  if(s==="Envoyé")return"infotag";
+  if(s==="À faire")return"wait";
+  return"";
+}
+function loadDossiers(){
+  return api(DOSSPATH+":/content").then(function(j){
+    if(j&&Array.isArray(j.dossiers)){dossiers=j.dossiers;renderDossiers();}
+  });
+}
+function norm(s){return String(s==null?"":s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
+function renderDossiers(){
+  if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";return;}
+  var q=norm(($("#q")&&$("#q").value||"").trim());
+  var liste=dossiers.filter(function(d){
+    if(!q)return true;
+    return norm(d.client+" "+(d.commune||"")+" "+(d.travaux||"")).indexOf(q)>=0;
+  });
+  var ouvertes=function(d){return d.statut!=="Accepté"&&d.statut!=="Refusé";};
+  liste.sort(function(a,b){
+    if(ouvertes(a)!==ouvertes(b))return ouvertes(a)?-1:1;
+    return String(a.echeance||"9999").localeCompare(String(b.echeance||"9999"))||String(a.client).localeCompare(String(b.client));
+  });
+  var auj=today();
+  $("#dcount").textContent=liste.length+" dossier"+(liste.length>1?"s":"")+(q?" trouvé"+(liste.length>1?"s":""):" au total")
+    +" — "+dossiers.filter(function(d){return ouvertes(d)&&d.echeance&&d.echeance<auj;}).length+" en retard";
+  $("#dlist").innerHTML=liste.length?liste.map(function(d){
+    var retard=ouvertes(d)&&d.echeance&&d.echeance<auj;
+    var nb=data.tasks.filter(function(t){return t.status!=="done"&&String(t.client||"").toLowerCase()===String(d.client||"").toLowerCase();}).length;
+    var m=montantTexte(d.montant);
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+classeStatut(d.statut)+'">'+esc(d.statut)+'</span>'
+      +'<span class="sub">'+(d.echeance?(retard?"Échéance dépassée : ":"Échéance : ")+frDateCourt(d.echeance):"Échéance à renseigner")+'</span></div>'
+      +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
+      +'<div class="sub" style="margin-top:6px">'+frDateCourt(d.rdv)+" · RDV"+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
+      +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
+  }).join(""):'<p class="sub">Aucun dossier ne correspond à cette recherche.</p>';
+  Array.prototype.forEach.call($("#dlist").querySelectorAll("article"),function(a){
+    a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
+  });
+}
+function ouvrirDossier(id){
+  var d=dossiers.filter(function(x){return x.id===id;})[0];
+  if(!d)return;
+  var lignes=data.tasks.filter(function(t){return String(t.client||"").toLowerCase()===String(d.client||"").toLowerCase();});
+  var m=montantTexte(d.montant);
+  var html='<h2 style="margin:0 0 6px;font-size:21px">'+esc(d.client)+'</h2>'
+    +'<p class="sub" style="margin-top:0">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</p>'
+    +'<p><span class="tag '+classeStatut(d.statut)+'">'+esc(d.statut)+'</span></p>'
+    +'<p>Devis : '+(d.statut==="Accepté"?"accepté":d.statut==="Refusé"?"refusé":d.envoi?"envoyé le "+frDateCourt(d.envoi):"pas encore envoyé")+'<br>'
+    +'Rendez-vous : '+frDateCourt(d.rdv)+'<br>Échéance : '+frDateCourt(d.echeance)
+    +(d.relancePrevue?'<br>Relance '+(d.relanceFaite?"effectuée":"prévue")+' : '+frDateCourt(d.relancePrevue):"")
+    +(d.email?'<br>Contact : '+esc(d.email):"")
+    +(m?'<br>Montant : '+m:"")
+    +(d.statut==="Refusé"?'<br>Motif du refus : à renseigner':"")+'</p>';
+  html+="<h3 style=\"font-size:18px\">Actions liées</h3>";
+  html+=lignes.length?lignes.map(function(t){
+    var etat={todo:"à faire",waiting:"en attente",done:"terminée"}[t.status]||t.status;
+    return '<p><strong>'+esc(t.text)+'</strong><br><span class="sub">'+etat+" · "+frDate(t.date)+"</span></p>";
+  }).join(""):'<p class="sub">Aucune action enregistrée pour ce dossier.</p>';
+  html+='<div class="row" style="margin-top:14px"><button class="primary" type="button" data-new="1">Ajouter une action à ce dossier</button><button type="button" id="dlgno">Fermer</button></div>'
+    +'<p class="sub" style="margin-bottom:0">Fiche en lecture seule pour l’instant : les modifications du dossier viendront à l’étape suivante.</p>';
+  $("#dlgbody").innerHTML=html;
+  var dlg=$("#dlg");dlg.showModal();
+  $("#dlgno").onclick=function(){dlg.close();};
+  $("#dlgbody").querySelector("button[data-new]").onclick=function(){
+    dlg.close();
+    showEcran("today");
+    $("#client").value=d.client||"";
+    $("#quick").focus();
+    ok("Dossier "+d.client+" sélectionné : écris l’action puis valide.",MSGS.form);
+  };
+}
+function showEcran(nom){
+  ecran=nom;
+  $("#app").classList.toggle("hide",nom!=="today");
+  $("#dossiers").classList.toggle("hide",nom!=="dossiers");
+  Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){
+    b.classList.toggle("primary",b.dataset.s===nom);
+    b.setAttribute("aria-current",b.dataset.s===nom?"page":"false");
+  });
+  if(nom==="dossiers")renderDossiers();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
+if($("#q"))$("#q").oninput=function(){renderDossiers();};
+
 $("#addform").onsubmit=function(e){
   e.preventDefault();clearMsgs();
   var text=$("#quick").value.trim();
@@ -220,10 +341,12 @@ $("#addform").onsubmit=function(e){
 };
 function showLoggedOut(){
   $("#login").classList.remove("hide");$("#logout").classList.add("hide");$("#app").classList.add("hide");
+  $("#dossiers").classList.add("hide");$("#nav").classList.add("hide");
   $("#who").textContent="";$("#sync").textContent="Non connecté.";
 }
 function showLoggedIn(){
-  $("#login").classList.add("hide");$("#logout").classList.remove("hide");$("#app").classList.remove("hide");
+  $("#login").classList.add("hide");$("#logout").classList.remove("hide");$("#nav").classList.remove("hide");
+  showEcran(ecran);
 }
 function start(){
   var h=new URLSearchParams(location.hash.replace(/^#/,""));
@@ -245,7 +368,8 @@ function start(){
       if(cached&&Array.isArray(cached.tasks)){data=cached;render();}
       return api("/me?$select=displayName").then(function(me){$("#who").textContent=me.displayName||"";})
         .then(loadData)
-        .then(function(){$("#sync").textContent="Connecté — tes tâches sont lues et enregistrées dans ton OneDrive.";})
+        .then(function(){return loadDossiers().catch(function(){return null;});})
+        .then(function(){$("#sync").textContent="Connecté — tes tâches et tes dossiers sont lus depuis ton OneDrive.";})
         .catch(function(e){fail(String(e.message));$("#sync").textContent="Connecté, mais lecture impossible.";});
     });
   });
