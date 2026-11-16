@@ -51,7 +51,6 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
 </header>
 <main>
   <div id="err" class="msg err hide"></div>
-  <div id="ok" class="msg okmsg hide"></div>
 
   <section id="intro" class="card">
     <p><strong>Version de test.</strong> Cette page lit et écrit tes tâches dans le dossier de l’application, sur ton OneDrive. Rien n’est envoyé ailleurs.</p>
@@ -59,7 +58,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
   </section>
 
   <section id="app" class="hide">
-    <form class="card" id="addform" autocomplete="off">
+    <form class="card" id="addform" autocomplete="off" novalidate>
       <label for="quick">Nouvelle action</label>
       <input id="quick" placeholder="Quelques mots sur ce qu’il faut faire" maxlength="180" required>
       <div class="grid" style="margin-top:12px">
@@ -68,7 +67,10 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       </div>
       <label class="chk"><input id="blocking" type="checkbox"> Cette action débloque le dossier</label>
       <div style="margin-top:14px"><button class="primary" type="submit">Ajouter une tâche</button></div>
+      <div id="formmsg" class="msg hide" role="alert"></div>
     </form>
+
+    <div id="listmsg" class="msg hide" role="alert"></div>
 
     <div class="row tabs card" id="tabs" style="gap:8px"></div>
     <div class="card" id="list"></div>
@@ -91,9 +93,18 @@ var LS_REFRESH="monbureau.refresh",LS_DATA="monbureau.cache",SS="monbureau.pkce"
 var $=function(s){return document.querySelector(s)};
 var data={version:1,tasks:[]},filter="todo",token=null,tokenExp=0;
 
-function fail(m){var e=$("#err");e.textContent=m;e.classList.remove("hide");$("#ok").classList.add("hide");}
-function clearMsgs(){$("#err").classList.add("hide");$("#ok").classList.add("hide");}
-function ok(m){var e=$("#ok");e.textContent=m;e.classList.remove("hide");$("#err").classList.add("hide");}
+var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg"};
+function showMsg(kind,txt,target){
+  var e=$(target||MSGS.top);
+  e.textContent=txt;
+  e.className="msg "+(kind==="ok"?"okmsg":"err");
+  try{e.scrollIntoView({block:"center",behavior:"smooth"});}catch(x){}
+}
+function fail(m,target){showMsg("err",m,target);}
+function clearMsgs(){
+  ["#err","#formmsg","#listmsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
+}
+function ok(m,target){showMsg("ok",m,target);}
 function b64url(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 function randomString(n){var a=new Uint8Array(n);crypto.getRandomValues(a);return b64url(a);}
 function challenge(v){return crypto.subtle.digest("SHA-256",new TextEncoder().encode(v)).then(b64url);}
@@ -156,7 +167,7 @@ function saveData(){
   });
 }
 function commit(){
-  saveData().then(function(){render();ok("Action enregistrée sur OneDrive.");}).catch(function(e){fail(String(e.message));});
+  saveData().then(function(){render();ok("Action enregistrée sur OneDrive.",MSGS.list);}).catch(function(e){fail(String(e.message),MSGS.list);});
 }
 function askDate(title,dlabel,value,cb){
   $("#dlgbody").innerHTML='<h2 style="margin:0 0 12px;font-size:21px">'+esc(title)+'</h2><label for="dlgd">'+esc(dlabel)+'</label><input id="dlgd" type="date" value="'+esc(value)+'"><div class="row" style="margin-top:16px"><button class="primary" id="dlgok" type="button">Valider</button><button id="dlgno" type="button">Annuler</button></div>';
@@ -199,9 +210,9 @@ function render(){
 $("#addform").onsubmit=function(e){
   e.preventDefault();clearMsgs();
   var text=$("#quick").value.trim();
-  if(!text){fail("Écris quelques mots pour décrire l’action.");return;}
+  if(!text){fail("Écris d’abord quelques mots pour décrire l’action.",MSGS.form);$("#quick").focus();return;}
   var due=$("#due").value;
-  if(!due){fail("Choisis une date proposée.");return;}
+  if(!due){fail("Choisis une date proposée.",MSGS.form);$("#due").focus();return;}
   data.tasks.unshift({id:Date.now(),client:($("#client").value.trim()||"—"),text:text,date:due,status:"todo",block:$("#blocking").checked,created:new Date().toISOString()});
   $("#quick").value="";$("#client").value="";$("#blocking").checked=false;$("#due").value=addDays(1);
   filter="todo";
