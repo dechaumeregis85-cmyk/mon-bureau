@@ -61,6 +61,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
   <nav class="card row hide" id="nav" style="gap:8px;padding:10px">
     <button type="button" data-s="today" class="primary">Ma journée</button>
     <button type="button" data-s="dossiers">Mes dossiers</button>
+    <button type="button" data-s="charge">Charge et planning</button>
   </nav>
 
   <section id="intro" class="card">
@@ -98,6 +99,31 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <div class="card" id="dlist"></div>
     <p class="state">Ces dossiers sont enregistrés dans ton OneDrive. Ton fichier Excel n’a pas été modifié et n’a plus besoin d’être tenu à jour.</p>
   </section>
+
+  <section id="charge" class="hide">
+    <div class="card">
+      <h2 style="margin-top:0">Charge à planifier</h2>
+      <div id="chargeRecap"><p class="sub">Calcul en cours…</p></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Équipe et horaires</h2>
+      <div class="grid" style="margin-top:6px">
+        <div><label for="rp">Personnes permanentes</label><input id="rp" type="number" min="1" max="30" value="5"></div>
+        <div><label for="rr">Renforts confirmés</label><input id="rr" type="number" min="0" max="20" value="0"></div>
+      </div>
+      <div class="grid" style="margin-top:10px">
+        <div><label for="hl">Lundi à jeudi (h/jour)</label><input id="hl" type="number" step="0.5" min="0" max="12" value="8"></div>
+        <div><label for="hv">Vendredi (h/jour)</label><input id="hv" type="number" step="0.5" min="0" max="12" value="7"></div>
+      </div>
+      <div class="row" style="margin-top:12px"><button class="primary" type="button" id="csave">Enregistrer l’équipe</button></div>
+      <p class="sub" id="cinfo" style="margin-bottom:0"></p>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Chantiers acceptés</h2>
+      <div id="chargeListe"></div>
+    </div>
+    <p class="state">Les jours fériés et les congés ne sont pas encore déduits de la capacité.</p>
+  </section>
 </main>
 <footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
 
@@ -112,9 +138,11 @@ var AUTH="https://login.microsoftonline.com/"+TENANT+"/oauth2/v2.0";
 var GRAPH="https://graph.microsoft.com/v1.0";
 var FILEPATH="/me/drive/special/approot:/mon-bureau/data.json";
 var DOSSPATH="/me/drive/special/approot:/mon-bureau/dossiers.json";
+var REGLAGESPATH="/me/drive/special/approot:/mon-bureau/reglages.json";
 var LS_REFRESH="monbureau.refresh",LS_DATA="monbureau.cache",SS="monbureau.pkce";
 var $=function(s){return document.querySelector(s)};
 var data={version:1,tasks:[]},dossiers=[],ecran="today",filter="todo",token=null,tokenExp=0;
+var reglages={equipe:{permanents:5,renforts:0,heuresLunJeu:8,heuresVen:7},conges:[]};
 
 var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg"};
 function showMsg(kind,txt,target){
@@ -291,7 +319,7 @@ function saveDossiers(modifier){
     var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
     modifier(paquet.dossiers);
     return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
-      .then(function(){dossiers=paquet.dossiers;renderDossiers();});
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();});
   });
 }
 function renderDossiers(){
@@ -338,6 +366,10 @@ function champDossier(d){
     +'<div><label for="fp">Date promise (client)</label><input id="fp" type="date" value="'+(d.datePromise||"")+'"></div>'
     +'<div><label for="fa">Alerte avant (jours)</label><input id="fa" type="number" min="0" max="60" value="'+(d.anticipation==null?3:d.anticipation)+'"></div>'
     +'</div>'
+    +'<div class="grid" style="margin-top:10px">'
+    +'<div><label for="fh">Heures prévues (devis Codial)</label><input id="fh" type="number" step="0.5" min="0" placeholder="à compléter" value="'+(d.heures==null?"":d.heures)+'"></div>'
+    +'<div></div>'
+    +'</div>'
     +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
     +'<p class="sub" id="fapercu" style="margin:10px 0 0"></p>';
 }
@@ -355,6 +387,7 @@ function lireChamps(base){
   d.delai=Number($("#fdel").value||7);
   d.datePromise=$("#fp").value||null;
   d.anticipation=Number($("#fa").value||3);
+  d.heures=$("#fh").value===""?null:Number($("#fh").value);
   d.relanceFaite=$("#fr").checked?"Oui":"";
   return d;
 }
@@ -428,20 +461,103 @@ function nouveauDossier(){
     }).catch(function(e){$("#nok").disabled=false;msg.className="msg err";msg.textContent=String(e.message);});
   };
 }
+function heuresTexte(h){
+  if(h==null||h==="")return "heures à renseigner";
+  var n=Number(h);
+  return (Math.round(n*10)/10).toLocaleString("fr-FR")+" h";
+}
+function chargeAcceptee(){
+  return dossiers.filter(function(d){return d.statut==="Accepté";});
+}
+function capaciteHebdo(r){
+  var eq=r.equipe||{},n=Number(eq.permanents||5)+Number(eq.renforts||0);
+  if(n<1)n=1;
+  var hJour=Number(eq.heuresLunJeu==null?8:eq.heuresLunJeu)*4+Number(eq.heuresVen==null?7:eq.heuresVen);
+  return n*hJour;
+}
+function loadReglages(){
+  return api(REGLAGESPATH+":/content").then(function(j){
+    if(j&&j.equipe){reglages=j;}
+  }).catch(function(){
+    reglages={equipe:{permanents:5,renforts:0,heuresLunJeu:8,heuresVen:7},conges:[],source:"valeurs par défaut"};
+  }).then(function(){remplirEquipe();renderCharge();});
+}
+function saveReglages(){
+  return api(REGLAGESPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(reglages)});
+}
+function remplirEquipe(){
+  var eq=reglages.equipe||{};
+  if($("#rp"))$("#rp").value=eq.permanents==null?5:eq.permanents;
+  if($("#rr"))$("#rr").value=eq.renforts==null?0:eq.renforts;
+  if($("#hl"))$("#hl").value=eq.heuresLunJeu==null?8:eq.heuresLunJeu;
+  if($("#hv"))$("#hv").value=eq.heuresVen==null?7:eq.heuresVen;
+}
+function renderCharge(){
+  if(!$("#chargeRecap"))return;
+  var ch=chargeAcceptee();
+  var connues=ch.filter(function(d){return d.heures!=null&&d.heures!=="";});
+  var sansHeures=ch.length-connues.length;
+  var total=connues.reduce(function(s,d){return s+Number(d.heures||0);},0);
+  var hebdo=capaciteHebdo(reglages);
+  var eq=reglages.equipe||{};
+  var personnes=Number(eq.permanents||5)+Number(eq.renforts||0);
+  var semaines=hebdo>0?total/hebdo:null;
+  var recap='<p><strong>'+heuresTexte(total)+'</strong> de main-d’œuvre engagée sur '+ch.length+' chantier'+(ch.length>1?"s":"")+" accepté"+(ch.length>1?"s":"")+"</p>";
+  if(sansHeures)recap+='<p class="sub">'+sansHeures+" chantier"+(sansHeures>1?"s":"")+" sans heures saisies : la charge réelle est donc au moins égale à ce total.</p>";
+  recap+="<p>Capacité de l’équipe : "+heuresTexte(hebdo)+" par semaine ("+personnes+" personne"+(personnes>1?"s":"")+", lundi à jeudi "+(eq.heuresLunJeu==null?8:eq.heuresLunJeu)+" h, vendredi "+(eq.heuresVen==null?7:eq.heuresVen)+" h)</p>";
+  if(total>0&&semaines!=null){
+    recap+="<p>À pleine capacité, ces heures représentent environ <strong>"+(Math.round(semaines*10)/10).toLocaleString("fr-FR")+" semaine"+(semaines>=2?"s":"")+"</strong> de travail de l’équipe, hors absences et sans tenir compte de l’ordre de priorité.</p>";
+  }
+  if(!ch.length)recap='<p class="sub">Aucun chantier accepté pour l’instant. Dès qu’un devis passera en « Accepté », il apparaîtra ici.</p>';
+  $("#chargeRecap").innerHTML=recap;
+
+  var liste=ch.slice().sort(function(a,b){return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));});
+  $("#chargeListe").innerHTML=liste.length?liste.map(function(d){
+    var manque=d.heures==null||d.heures==="";
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+(manque?"wait":"oktag")+'">'+(manque?"Heures à saisir":heuresTexte(d.heures))+'</span>'
+      +'<span class="sub">Rendez-vous : '+frDateCourt(d.rdv)+'</span></div>'
+      +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+"</div>"
+      +'<div class="row" style="margin-top:10px"><button type="button">Saisir les heures</button></div></article>';
+  }).join(""):'<p class="sub">Aucun chantier accepté.</p>';
+  Array.prototype.forEach.call($("#chargeListe").querySelectorAll("article"),function(a){
+    a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
+  });
+}
 function showEcran(nom){
   ecran=nom;
   $("#app").classList.toggle("hide",nom!=="today");
   $("#dossiers").classList.toggle("hide",nom!=="dossiers");
+  $("#charge").classList.toggle("hide",nom!=="charge");
   Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){
     b.classList.toggle("primary",b.dataset.s===nom);
     b.setAttribute("aria-current",b.dataset.s===nom?"page":"false");
   });
   if(nom==="dossiers")renderDossiers();
+  if(nom==="charge"){remplirEquipe();renderCharge();}
   window.scrollTo({top:0,behavior:"smooth"});
 }
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
 if($("#q"))$("#q").oninput=function(){renderDossiers();};
 if($("#dnew"))$("#dnew").onclick=nouveauDossier;
+if($("#csave"))$("#csave").onclick=function(){
+  var e=reglages.equipe||{};
+  e.permanents=Number($("#rp").value||5);
+  e.renforts=Number($("#rr").value||0);
+  e.heuresLunJeu=Number($("#hl").value||8);
+  e.heuresVen=Number($("#hv").value||7);
+  reglages.equipe=e;
+  $("#csave").disabled=true;
+  saveReglages().then(function(){
+    $("#csave").disabled=false;
+    $("#cinfo").textContent="Équipe enregistrée dans ton OneDrive : "+heuresTexte(capaciteHebdo(reglages))+" disponibles par semaine.";
+    renderCharge();
+    ok("Équipe enregistrée sur OneDrive.",MSGS.list);
+  }).catch(function(err){
+    $("#csave").disabled=false;
+    $("#cinfo").textContent="";
+    fail(String(err.message));
+  });
+};
 
 $("#addform").onsubmit=function(e){
   e.preventDefault();clearMsgs();
@@ -456,7 +572,7 @@ $("#addform").onsubmit=function(e){
 };
 function showLoggedOut(){
   $("#login").classList.remove("hide");$("#logout").classList.add("hide");$("#app").classList.add("hide");
-  $("#dossiers").classList.add("hide");$("#nav").classList.add("hide");
+  $("#dossiers").classList.add("hide");$("#charge").classList.add("hide");$("#nav").classList.add("hide");
   $("#who").textContent="";$("#sync").textContent="Non connecté.";
 }
 function showLoggedIn(){
@@ -484,6 +600,7 @@ function start(){
       return api("/me?$select=displayName").then(function(me){$("#who").textContent=me.displayName||"";})
         .then(loadData)
         .then(function(){return loadDossiers().catch(function(){return null;});})
+        .then(function(){return loadReglages().catch(function(){return null;});})
         .then(function(){$("#sync").textContent="Connecté — tes tâches et tes dossiers sont lus depuis ton OneDrive.";})
         .catch(function(e){fail(String(e.message));$("#sync").textContent="Connecté, mais lecture impossible.";});
     });
