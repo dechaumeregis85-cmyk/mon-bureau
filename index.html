@@ -93,9 +93,10 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <label for="q">Rechercher un dossier</label>
       <input id="q" placeholder="Nom du client ou commune" autocomplete="off">
       <p class="state" id="dcount" style="margin-top:10px"></p>
+      <div class="row" style="margin-top:10px"><button class="primary" type="button" id="dnew">Créer un dossier</button></div>
     </div>
     <div class="card" id="dlist"></div>
-    <p class="state">Dossiers repris de ton fichier « Suivi des devis ». Ils sont en lecture seule pour l’instant. Ton fichier Excel n’a pas été modifié.</p>
+    <p class="state">Ces dossiers sont enregistrés dans ton OneDrive. Ton fichier Excel n’a pas été modifié et n’a plus besoin d’être tenu à jour.</p>
   </section>
 </main>
 <footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
@@ -247,12 +248,52 @@ function classeStatut(s){
   if(s==="À faire")return"wait";
   return"";
 }
+function norm(s){return String(s==null?"":s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
+function plusJours(iso,n){
+  if(!iso)return null;
+  var d=new Date(iso+"T12:00:00");d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function echeanceDe(d){
+  if(d.datePromise)return d.datePromise;
+  return d.rdv?plusJours(d.rdv,15):null;
+}
+function relanceDe(d){
+  if(!d.envoi)return null;
+  return plusJours(d.envoi,Number(d.delai||7));
+}
+function etatDossier(d){
+  var auj=today(),ech=echeanceDe(d),ant=Number(d.anticipation||3);
+  if(d.statut==="À faire"){
+    if(!ech)return{code:"Date manquante",classe:"wait"};
+    if(ech<auj)return{code:"Devis en retard",classe:"urgent"};
+    if(ech<=plusJours(auj,ant))return{code:"Devis à préparer",classe:"wait"};
+    return{code:"À venir",classe:"infotag"};
+  }
+  if(d.statut==="Envoyé"){
+    if(d.relanceFaite==="Oui")return{code:"Relance effectuée",classe:"oktag"};
+    if(!d.envoi)return{code:"Date d’envoi manquante",classe:"wait"};
+    var rel=relanceDe(d);
+    if(rel&&rel<=auj)return{code:"Client à relancer",classe:"urgent"};
+    return{code:"En attente",classe:"infotag"};
+  }
+  if(d.statut==="Accepté"||d.statut==="Refusé")return{code:"Clôturé",classe:"greytag"};
+  return{code:"Statut à renseigner",classe:"wait"};
+}
+function aTraiter(d){var c=etatDossier(d).code;return c.charAt(0)!=="À"&&c!=="En attente"&&c!=="Relance effectuée"&&c!=="Clôturé";}
 function loadDossiers(){
   return api(DOSSPATH+":/content").then(function(j){
     if(j&&Array.isArray(j.dossiers)){dossiers=j.dossiers;renderDossiers();}
   });
 }
-function norm(s){return String(s==null?"":s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
+function saveDossiers(modifier){
+  return api(DOSSPATH+":/content").then(function(j){
+    var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
+    modifier(paquet.dossiers);
+    return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();});
+  });
+}
 function renderDossiers(){
   if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";return;}
   var q=norm(($("#q")&&$("#q").value||"").trim());
@@ -263,48 +304,81 @@ function renderDossiers(){
   var ouvertes=function(d){return d.statut!=="Accepté"&&d.statut!=="Refusé";};
   liste.sort(function(a,b){
     if(ouvertes(a)!==ouvertes(b))return ouvertes(a)?-1:1;
-    return String(a.echeance||"9999").localeCompare(String(b.echeance||"9999"))||String(a.client).localeCompare(String(b.client));
+    if(aTraiter(a)!==aTraiter(b))return aTraiter(a)?-1:1;
+    return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"))||String(a.client).localeCompare(String(b.client));
   });
-  var auj=today();
   $("#dcount").textContent=liste.length+" dossier"+(liste.length>1?"s":"")+(q?" trouvé"+(liste.length>1?"s":""):" au total")
-    +" — "+dossiers.filter(function(d){return ouvertes(d)&&d.echeance&&d.echeance<auj;}).length+" en retard";
+    +" — "+dossiers.filter(aTraiter).length+" à traiter";
   $("#dlist").innerHTML=liste.length?liste.map(function(d){
-    var retard=ouvertes(d)&&d.echeance&&d.echeance<auj;
-    var nb=data.tasks.filter(function(t){return t.status!=="done"&&String(t.client||"").toLowerCase()===String(d.client||"").toLowerCase();}).length;
+    var etat=etatDossier(d),ech=echeanceDe(d);
+    var nb=data.tasks.filter(function(t){return t.status!=="done"&&norm(t.client)===norm(d.client);}).length;
     var m=montantTexte(d.montant);
-    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+classeStatut(d.statut)+'">'+esc(d.statut)+'</span>'
-      +'<span class="sub">'+(d.echeance?(retard?"Échéance dépassée : ":"Échéance : ")+frDateCourt(d.echeance):"Échéance à renseigner")+'</span></div>'
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+etat.classe+'">'+esc(etat.code)+'</span>'
+      +'<span class="sub">'+(ech?(ech<today()&&ouvertes(d)?"Échéance dépassée : ":"Échéance : ")+frDateCourt(ech):"Échéance à renseigner")+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
-      +'<div class="sub" style="margin-top:6px">'+frDateCourt(d.rdv)+" · RDV"+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
+      +'<div class="sub" style="margin-top:6px">Devis '+esc(String(d.statut||"?").toLowerCase())+(d.envoi?" · envoyé le "+frDateCourt(d.envoi):"")+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
       +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
   }).join(""):'<p class="sub">Aucun dossier ne correspond à cette recherche.</p>';
   Array.prototype.forEach.call($("#dlist").querySelectorAll("article"),function(a){
     a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
   });
 }
+function champDossier(d){
+  return '<div class="grid" style="margin-top:10px">'
+    +'<div><label for="fs">Statut du devis</label><select id="fs">'
+    +["À faire","Envoyé","Accepté","Refusé"].map(function(s){return'<option'+(d.statut===s?" selected":"")+">"+s+"</option>";}).join("")
+    +'</select></div>'
+    +'<div><label for="fm">Montant HT (€)</label><input id="fm" type="number" step="0.01" min="0" value="'+(d.montant==null?"":d.montant)+'"></div>'
+    +'</div>'
+    +'<div class="grid" style="margin-top:10px">'
+    +'<div><label for="fe">Date d’envoi</label><input id="fe" type="date" value="'+(d.envoi||"")+'"></div>'
+    +'<div><label for="fdel">Relance (jours après envoi)</label><input id="fdel" type="number" min="0" max="90" value="'+(d.delai==null?7:d.delai)+'"></div>'
+    +'</div>'
+    +'<div class="grid" style="margin-top:10px">'
+    +'<div><label for="fp">Date promise (client)</label><input id="fp" type="date" value="'+(d.datePromise||"")+'"></div>'
+    +'<div><label for="fa">Alerte avant (jours)</label><input id="fa" type="number" min="0" max="60" value="'+(d.anticipation==null?3:d.anticipation)+'"></div>'
+    +'</div>'
+    +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
+    +'<p class="sub" id="fapercu" style="margin:10px 0 0"></p>';
+}
+function apercuDossier(d){
+  var ech=echeanceDe(d),rel=relanceDe(d);
+  return "Échéance retenue : "+(ech?frDateCourt(ech)+" (rendez-vous + 15 jours, sauf date promise)":"à renseigner")
+    +" · À préparer dès : "+(ech?frDateCourt(plusJours(ech,-Number(d.anticipation||3))):"—")
+    +" · Relance prévue : "+(rel?frDateCourt(rel):(d.statut==="Envoyé"?"à renseigner":"—"));
+}
+function lireChamps(base){
+  var d=Object.assign({},base);
+  d.statut=$("#fs").value;
+  d.montant=$("#fm").value===""?null:Number($("#fm").value);
+  d.envoi=$("#fe").value||null;
+  d.delai=Number($("#fdel").value||7);
+  d.datePromise=$("#fp").value||null;
+  d.anticipation=Number($("#fa").value||3);
+  d.relanceFaite=$("#fr").checked?"Oui":"";
+  return d;
+}
 function ouvrirDossier(id){
   var d=dossiers.filter(function(x){return x.id===id;})[0];
   if(!d)return;
-  var lignes=data.tasks.filter(function(t){return String(t.client||"").toLowerCase()===String(d.client||"").toLowerCase();});
-  var m=montantTexte(d.montant);
+  var lignes=data.tasks.filter(function(t){return norm(t.client)===norm(d.client);});
   var html='<h2 style="margin:0 0 6px;font-size:21px">'+esc(d.client)+'</h2>'
-    +'<p class="sub" style="margin-top:0">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</p>'
-    +'<p><span class="tag '+classeStatut(d.statut)+'">'+esc(d.statut)+'</span></p>'
-    +'<p>Devis : '+(d.statut==="Accepté"?"accepté":d.statut==="Refusé"?"refusé":d.envoi?"envoyé le "+frDateCourt(d.envoi):"pas encore envoyé")+'<br>'
-    +'Rendez-vous : '+frDateCourt(d.rdv)+'<br>Échéance : '+frDateCourt(d.echeance)
-    +(d.relancePrevue?'<br>Relance '+(d.relanceFaite?"effectuée":"prévue")+' : '+frDateCourt(d.relancePrevue):"")
-    +(d.email?'<br>Contact : '+esc(d.email):"")
-    +(m?'<br>Montant : '+m:"")
-    +(d.statut==="Refusé"?'<br>Motif du refus : à renseigner':"")+'</p>';
-  html+="<h3 style=\"font-size:18px\">Actions liées</h3>";
+    +'<p class="sub" style="margin-top:0">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+(d.email?" · "+esc(d.email):"")+'</p>'
+    +'<p class="sub" style="margin:0 0 4px">Rendez-vous : '+frDateCourt(d.rdv)+'</p>'
+    +champDossier(d)
+    +"<h3 style=\"font-size:18px\">Actions liées</h3>";
   html+=lignes.length?lignes.map(function(t){
     var etat={todo:"à faire",waiting:"en attente",done:"terminée"}[t.status]||t.status;
     return '<p><strong>'+esc(t.text)+'</strong><br><span class="sub">'+etat+" · "+frDate(t.date)+"</span></p>";
   }).join(""):'<p class="sub">Aucune action enregistrée pour ce dossier.</p>';
-  html+='<div class="row" style="margin-top:14px"><button class="primary" type="button" data-new="1">Ajouter une action à ce dossier</button><button type="button" id="dlgno">Fermer</button></div>'
-    +'<p class="sub" style="margin-bottom:0">Fiche en lecture seule pour l’instant : les modifications du dossier viendront à l’étape suivante.</p>';
+  html+='<div class="row" style="margin-top:14px"><button class="primary" type="button" id="dsave">Enregistrer</button><button type="button" data-new="1">Ajouter une action</button><button type="button" id="dlgno">Fermer</button></div>'
+    +'<div id="dmsg" class="msg hide" role="alert"></div>';
   $("#dlgbody").innerHTML=html;
   var dlg=$("#dlg");dlg.showModal();
+  $("#fapercu").textContent=apercuDossier(d);
+  ["fs","fe","fp","fdel","fa"].forEach(function(k){
+    $("#"+k).onchange=function(){$("#fapercu").textContent=apercuDossier(lireChamps(d));};
+  });
   $("#dlgno").onclick=function(){dlg.close();};
   $("#dlgbody").querySelector("button[data-new]").onclick=function(){
     dlg.close();
@@ -312,6 +386,46 @@ function ouvrirDossier(id){
     $("#client").value=d.client||"";
     $("#quick").focus();
     ok("Dossier "+d.client+" sélectionné : écris l’action puis valide.",MSGS.form);
+  };
+  $("#dsave").onclick=function(){
+    var modifie=lireChamps(d),msg=$("#dmsg");
+    $("#dsave").disabled=true;
+    saveDossiers(function(liste){
+      for(var i=0;i<liste.length;i++)if(liste[i].id===id)liste[i]=Object.assign(liste[i],modifie);
+    }).then(function(){
+      dlg.close();
+      ok("Dossier "+modifie.client+" enregistré sur OneDrive.",MSGS.list);
+    }).catch(function(e){
+      $("#dsave").disabled=false;
+      msg.className="msg err";msg.textContent=String(e.message);
+    });
+  };
+}
+function nouveauDossier(){
+  var html='<h2 style="margin:0 0 12px;font-size:21px">Nouveau dossier</h2>'
+    +'<label for="nc">Client</label><input id="nc" placeholder="Nom du client">'
+    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" placeholder="CLIM, PAC, SDB…"></div>'
+    +'<div><label for="nco">Commune</label><input id="nco" placeholder="85200 — …"></div></div>'
+    +'<div class="grid" style="margin-top:10px"><div><label for="nr">Date du rendez-vous</label><input id="nr" type="date" value="'+today()+'"></div>'
+    +'<div><label for="nem">E-mail client</label><input id="nem" type="email" placeholder="optionnel"></div></div>'
+    +'<p class="sub">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous, sauf date promise.</p>'
+    +'<div class="row" style="margin-top:14px"><button class="primary" type="button" id="nok">Créer le dossier</button><button type="button" id="nno">Annuler</button></div>'
+    +'<div id="nmsg" class="msg hide" role="alert"></div>';
+  $("#dlgbody").innerHTML=html;
+  var dlg=$("#dlg");dlg.showModal();
+  $("#nno").onclick=function(){dlg.close();};
+  $("#nok").onclick=function(){
+    var client=$("#nc").value.trim(),msg=$("#nmsg");
+    if(!client){msg.className="msg err";msg.textContent="Indique le nom du client.";return;}
+    var nouveau={
+      id:"d"+Date.now(),client:client,travaux:$("#nt").value.trim(),commune:$("#nco").value.trim(),
+      email:$("#nem").value.trim(),rdv:$("#nr").value||today(),datePromise:null,statut:"À faire",
+      montant:null,envoi:null,relanceFaite:"",delai:7,anticipation:3,source:"application"
+    };
+    $("#nok").disabled=true;
+    saveDossiers(function(liste){liste.unshift(nouveau);}).then(function(){
+      dlg.close();ok("Dossier "+client+" créé sur OneDrive.",MSGS.list);
+    }).catch(function(e){$("#nok").disabled=false;msg.className="msg err";msg.textContent=String(e.message);});
   };
 }
 function showEcran(nom){
@@ -327,6 +441,7 @@ function showEcran(nom){
 }
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
 if($("#q"))$("#q").oninput=function(){renderDossiers();};
+if($("#dnew"))$("#dnew").onclick=nouveauDossier;
 
 $("#addform").onsubmit=function(e){
   e.preventDefault();clearMsgs();
