@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mon Bureau</title>
+<style>
+:root{--ink:#23332f;--green:#17664f;--muted:#5b6b65;--line:#d8e0da;--bg:#f4f5ef;--warn:#8c3917;--warnbg:#fce5d9;--wait:#795512;--waitbg:#f7edcf}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.55 'Segoe UI',Arial,sans-serif}
+button,input,select{font:inherit}
+button{cursor:pointer;min-height:46px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);padding:9px 15px}
+button:hover{background:#e7efe8}
+button.primary{background:var(--green);color:#fff;border-color:var(--green)}
+button:focus-visible,input:focus-visible{outline:3px solid #bd7622;outline-offset:2px}
+header{background:#fff;border-bottom:1px solid var(--line);padding:18px 22px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:26px;margin:0}
+main{max-width:960px;margin:0 auto;padding:22px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.between{justify-content:space-between}
+input,select{min-height:48px;border:1px solid #99aaa1;border-radius:6px;padding:9px 12px;background:#fff;color:var(--ink);max-width:100%}
+.capture input{flex:1;min-width:150px}
+.task{padding:16px 0;border-top:1px solid var(--line)}
+.task:first-child{border-top:0}
+.task strong{font-size:20px;display:block;margin-top:6px}
+.tag{display:inline-block;font-size:14px;font-weight:600;padding:4px 9px;border-radius:5px;background:#edf1eb}
+.urgent{background:var(--warnbg);color:var(--warn)}
+.wait{background:var(--waitbg);color:var(--wait)}
+.sub{font-size:16px;color:var(--muted)}
+.tabs button[aria-pressed=true]{background:#dcebe1;border-color:var(--green)}
+.actions button{font-size:16px}
+.state{font-size:15px;padding:9px 12px;border-radius:6px;background:#edf1eb;display:inline-block}
+.err{background:var(--warnbg);color:var(--warn);padding:12px;border-radius:7px;margin:12px 0;white-space:pre-wrap}
+.hide{display:none!important}
+footer{font-size:14px;color:var(--muted);text-align:center;padding:10px 0 30px}
+@media(max-width:700px){header{padding:14px}main{padding:14px}.capture button{width:100%}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Mon Bureau</h1>
+  <div class="row"><span id="who" class="sub"></span><button id="login" class="primary">Se connecter</button><button id="logout" class="hide">Se déconnecter</button></div>
+</header>
+<main>
+  <div id="err" class="err hide"></div>
+
+  <section id="intro" class="card">
+    <p><strong>Version de test.</strong> Cette page se connecte à ton OneDrive pour lire et écrire tes tâches dans le dossier de l’application. Aucune donnée n’est envoyée ailleurs.</p>
+    <p id="sync" class="sub">Non connecté.</p>
+  </section>
+
+  <section id="app" class="hide">
+    <form class="card row capture" id="addform">
+      <input id="quick" placeholder="Client — quelques mots sur ce qu’il faut faire" maxlength="180" required aria-label="Nouvelle tâche">
+      <button class="primary" type="submit">Ajouter une tâche</button>
+    </form>
+    <div class="row tabs card" id="tabs"></div>
+    <div class="card" id="list"></div>
+    <p class="sub" id="updated"></p>
+  </section>
+</main>
+<footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
+
+<script>
+"use strict";
+const TENANT="6fac8455-58fe-40e2-82ed-90b36e0a24e0";
+const CLIENT="8b242272-433b-4acc-8f42-82567c8b9b87";
+const SCOPES="openid profile offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Files.ReadWrite.AppFolder";
+const AUTH="https://login.microsoftonline.com/"+TENANT+"/oauth2/v2.0";
+const GRAPH="https://graph.microsoft.com/v1.0";
+const FILEPATH="/me/drive/special/approot:/mon-bureau/data.json";
+const LS_REFRESH="monbureau.refresh";
+const LS_DATA="monbureau.cache";
+const SS="monbureau.pkce";
+const $=s=>document.querySelector(s);
+let data={version:1,tasks:[]},filter="todo",token=null,tokenExp=0;
+
+function fail(msg){const e=$("#err");e.textContent=msg;e.classList.remove("hide");console.error(msg);}
+function clearErr(){$("#err").classList.add("hide");}
+function b64url(buf){return btoa(String.fromCharCode.apply(null,new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
+function randomString(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return b64url(a);}
+async function challenge(verifier){return b64url(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier)));}
+function redirectUri(){return location.origin+location.pathname;}
+
+async function login(){
+  clearErr();
+  const verifier=randomString(32),state=randomString(16);
+  sessionStorage.setItem(SS,JSON.stringify({verifier,state}));
+  const p=new URLSearchParams({client_id:CLIENT,response_type:"code",redirect_uri:redirectUri(),response_mode:"fragment",scope:SCOPES,state,code_challenge:await challenge(verifier),code_challenge_method:"S256"});
+  location.assign(AUTH+"/authorize?"+p.toString());
+}
+
+async function tokenRequest(body){
+  const r=await fetch(AUTH+"/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(body).toString()});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){throw new Error((j.error||"erreur")+" : "+(j.error_description||"échec de la requête de jeton"));}
+  return j;
+}
+async function storeTokens(j){
+  token=j.access_token;tokenExp=Date.now()+(j.expires_in||3600)*1000-60000;
+  if(j.refresh_token)localStorage.setItem(LS_REFRESH,j.refresh_token);
+}
+async function refresh(){
+  const rt=localStorage.getItem(LS_REFRESH);
+  if(!rt)return false;
+  try{await storeTokens(await tokenRequest({grant_type:"refresh_token",client_id:CLIENT,refresh_token:rt,scope:SCOPES,redirect_uri:redirectUri()}));return true;}
+  catch(e){localStorage.removeItem(LS_REFRESH);return false;}
+}
+async function api(path,opt){
+  if(!token||Date.now()>tokenExp){if(!(await refresh())){showLoggedOut();throw new Error("Session expirée, reconnecte-toi.");}}
+  opt=opt||{};
+  const headers=Object.assign({"Authorization":"Bearer "+token},opt.headers||{});
+  const r=await fetch(GRAPH+path,{method:opt.method||"GET",headers,body:opt.body});
+  if(r.status===401&&await refresh()){return api(path,opt);}
+  if(!r.ok){const t=await r.text();throw new Error("Erreur OneDrive ("+r.status+") : "+t.slice(0,300));}
+  const txt=await r.text();
+  return txt?JSON.parse(txt):{};
+}
+
+async function loadData(){
+  try{
+    const j=await api(FILEPATH+":/content");
+    if(j&&Array.isArray(j.tasks)){data=j;localStorage.setItem(LS_DATA,JSON.stringify(j));}
+  }catch(e){
+    if(String(e.message).indexOf("404")>=0||/itemNotFound/.test(e.message)){data={version:1,tasks:[]};await saveData();}
+    else throw e;
+  }
+  render();
+}
+async function saveData(){
+  await api(FILEPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+  localStorage.setItem(LS_DATA,JSON.stringify(data));
+  $("#updated").textContent="Enregistré sur OneDrive "+new Date().toLocaleString("fr-FR");
+}
+
+function today(){return new Date().toISOString().slice(0,10);}
+function addDays(n){const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
+function frDate(s){
+  if(!s)return"";
+  const d=new Date(s+"T12:00:00");
+  const open=(s<=today());
+  const t=d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});
+  return (open?"à faire — ":"prévu ")+t;
+}
+function render(){
+  const counts={todo:0,waiting:0,done:0};
+  data.tasks.forEach(t=>counts[t.status]=(counts[t.status]||0)+1);
+  $("#tabs").innerHTML=[["todo","À faire"],["waiting","En attente"],["done","Terminées"]]
+    .map(function(p){return '<button type="button" aria-pressed="'+(filter===p[0])+'" data-f="'+p[0]+'">'+p[1]+" ("+(counts[p[0]]||0)+")</button>";}).join("");
+  $("#tabs").querySelectorAll("button").forEach(b=>b.onclick=function(){filter=b.dataset.f;render();});
+  const rows=data.tasks.filter(t=>t.status===filter).sort(function(a,b){
+    return (Number(b.block)-Number(a.block))||String(a.date).localeCompare(String(b.date));
+  });
+  $("#list").innerHTML=rows.length?rows.map(function(t){
+    const late=t.status==="todo"&&t.date<today();
+    const tag=t.block?'<span class="tag urgent">Débloque le dossier</span>':(late?'<span class="tag urgent">En retard</span>':(t.status==="waiting"?'<span class="tag wait">Réponse attendue</span>':'<span class="tag">À traiter</span>'));
+    return '<article class="task" data-id="'+t.id+'"><div class="row between">'+tag+'<span class="sub">'+(t.status==="waiting"?"Relance : ":"")+frDate(t.date)+'</span></div><strong>'+esc(t.text)+'</strong><div class="sub">Dossier '+esc(t.client||"—")+'</div><div class="row actions" style="margin-top:10px">'+
+      (t.status==="done"?'<button data-a="todo">Remettre à faire</button>':'<button data-a="done">Terminer</button><button data-a="report">Reporter</button>'+(t.status==="todo"?'<button data-a="waiting">Demande envoyée</button>':''))+
+      "</div></article>";
+  }).join(""):'<p class="sub">Aucune action dans cette liste.</p>';
+  $("#list").querySelectorAll("article").forEach(function(a){
+    const id=a.dataset.id;
+    a.querySelectorAll("button").forEach(function(b){
+      b.onclick=async function(){
+        const t=data.tasks.find(x=>String(x.id)===String(id));
+        if(b.dataset.a==="report"){const v=prompt("Nouvelle date (AAAA-MM-JJ) :",t.date||addDays(1));if(!v)return;t.date=v;}
+        else if(b.dataset.a==="waiting"){t.status="waiting";t.date=prompt("Date de relance (AAAA-MM-JJ) :",t.date||addDays(5))||t.date;}
+        else t.status=b.dataset.a;
+        try{await saveData();render();}catch(e){fail(String(e.message));}
+      };
+    });
+  });
+}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+$("#addform").onsubmit=async function(e){
+  e.preventDefault();clearErr();
+  const text=$("#quick").value.trim();
+  if(!text)return;
+  const suggested=prompt("Pour quel dossier ? (nom du client)","");
+  const d=prompt("Date proposée (AAAA-MM-JJ) :",addDays(1));
+  if(!d)return;
+  data.tasks.unshift({id:Date.now(),client:(suggested||"—").trim(),text:text,date:d,status:"todo",block:false,created:new Date().toISOString()});
+  $("#quick").value="";
+  filter="todo";
+  try{await saveData();render();}catch(err){fail(String(err.message));}
+};
+
+function showLoggedOut(){
+  $("#login").classList.remove("hide");$("#logout").classList.add("hide");$("#app").classList.add("hide");
+  $("#who").textContent="";$("#sync").textContent="Non connecté.";
+}
+async function start(){
+  const h=new URLSearchParams(location.hash.replace(/^#/,""));
+  if(h.get("error")){fail("Connexion refusée : "+h.get("error")+" — "+(h.get("error_description")||""));history.replaceState(null,"",redirectUri());}
+  else if(h.get("code")){
+    const saved=JSON.parse(sessionStorage.getItem(SS)||"{}");
+    sessionStorage.removeItem(SS);
+    try{
+      await storeTokens(await tokenRequest({grant_type:"authorization_code",client_id:CLIENT,code:h.get("code"),redirect_uri:redirectUri(),scope:SCOPES,code_verifier:saved.verifier}));
+    }catch(e){fail("Échec de la connexion : "+e.message);}
+    history.replaceState(null,"",redirectUri());
+  }
+  let cached=null;try{cached=JSON.parse(localStorage.getItem(LS_DATA)||"null");}catch(e){}
+  if(token||await refresh()){
+    $("#login").classList.add("hide");$("#logout").classList.remove("hide");$("#app").classList.remove("hide");
+    $("#sync").textContent="Connecté. Lecture de tes tâches sur OneDrive…";
+    if(cached&&Array.isArray(cached.tasks)){data=cached;render();}
+    try{
+      const me=await api("/me?$select=displayName");
+      $("#who").textContent=me.displayName||"";
+      await loadData();
+      $("#sync").textContent="Connecté — tes tâches sont lues et enregistrées dans ton OneDrive.";
+    }catch(e){fail(String(e.message));$("#sync").textContent="Connecté, mais lecture impossible.";}
+  }
+}
+$("#login").onclick=login;
+$("#logout").onclick=function(){localStorage.removeItem(LS_REFRESH);localStorage.removeItem(LS_DATA);token=null;showLoggedOut();};
+start();
+</script>
+</body>
+</html>
