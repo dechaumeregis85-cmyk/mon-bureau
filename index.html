@@ -267,6 +267,7 @@ function askDate(title,dlabel,value,cb){
   $("#dlgok").onclick=function(){var v=$("#dlgd").value;d.close();if(v)cb(v);};
   $("#dlgno").onclick=function(){d.close();};
 }
+var devisJourCategorie=null;
 function renderDevisJour(){
   if(!$("#devisJour"))return;
   var auj=today();
@@ -276,22 +277,23 @@ function renderDevisJour(){
     if(ordre[ea]!==ordre[eb])return ordre[ea]-ordre[eb];
     return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));
   });
-  var retards=concernes.filter(function(d){return etatDossier(d).code==="Devis en retard";}).length;
-  var aPreparer=concernes.filter(function(d){return etatDossier(d).code==="Devis à préparer";}).length;
-  var relances=concernes.filter(function(d){return etatDossier(d).code==="Client à relancer";}).length;
-  var titre='<h2 style="margin:0 0 4px;font-size:21px">Devis et relances du jour</h2>';
-  if(!concernes.length){
-    $("#devisJour").innerHTML=titre+'<p class="sub" style="margin:0">Rien à traiter côté devis aujourd’hui. Les prochaines échéances sont plus loin.</p>';
-    return;
-  }
-  var resume="";
-  if(retards)resume+='<span class="tag urgent">'+retards+" en retard</span> ";
-  if(aPreparer)resume+='<span class="tag wait">'+aPreparer+" à préparer</span> ";
-  if(relances)resume+='<span class="tag urgent">'+relances+" à relancer</span> ";
-  var autres=concernes.length-retards-aPreparer-relances;
-  if(autres>0)resume+='<span class="tag">'+autres+" à compléter</span>";
-  $("#devisJour").innerHTML=titre+'<p style="margin:0 0 12px">'+resume+"</p>"
-    +concernes.slice(0,12).map(function(d){
+  var categories=[
+    {id:"retard",label:"En retard",codes:["Devis en retard"]},
+    {id:"preparer",label:"À préparer",codes:["Devis à préparer"]},
+    {id:"relancer",label:"À relancer",codes:["Client à relancer"]},
+    {id:"completer",label:"À compléter",codes:["Date manquante","Date d’envoi manquante","Statut à renseigner"]}
+  ];
+  var visibles=[];
+  var resume=categories.map(function(c){
+    var liste=concernes.filter(function(d){return c.codes.indexOf(etatDossier(d).code)!==-1;});
+    var actif=devisJourCategorie===c.id;
+    if(actif)visibles=liste;
+    return '<button type="button" class="tag" data-devis="'+c.id+'" aria-pressed="'+actif+'" aria-expanded="'+actif+'" aria-controls="devisJourListe">'+c.label+' ('+liste.length+')</button>';
+  }).join("");
+  $("#devisJour").innerHTML='<h2 style="margin:0 0 10px;font-size:21px">Devis et relances du jour</h2>'
+    +'<div class="row tabs" aria-label="Catégories de devis">'+resume+'</div>'
+    +'<div id="devisJourListe"'+(devisJourCategorie?'':' hidden')+'>'
+    +visibles.map(function(d){
       var e=etatDossier(d),ech=echeanceDe(d);
       var n=ech?absJours(auj,ech):0;
       var quand=ech?((ech<auj&&e.code!=="Client à relancer")?"en retard de "+Math.abs(n)+" jour"+(Math.abs(n)>1?"s":""):"échéance "+frDateCourt(ech)):"date manquante";
@@ -299,7 +301,15 @@ function renderDevisJour(){
         +'<strong>'+esc(d.client)+'</strong><div class="sub">Devis '+esc(String(d.statut||"?").toLowerCase())+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
         +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
     }).join("")
-    +(concernes.length>12?'<p class="sub">'+(concernes.length-12)+" autre(s) dossier(s) à traiter — voir l’onglet Mes dossiers.</p>":"");
+    +(devisJourCategorie&&!visibles.length?'<p class="sub">Aucun devis dans cette catégorie.</p>':'')+'</div>';
+  Array.prototype.forEach.call($("#devisJour").querySelectorAll("button[data-devis]"),function(b){
+    b.onclick=function(){
+      var categorie=b.dataset.devis;
+      devisJourCategorie=devisJourCategorie===categorie?null:categorie;
+      renderDevisJour();
+      $("#devisJour").querySelector('button[data-devis="'+categorie+'"]').focus();
+    };
+  });
   Array.prototype.forEach.call($("#devisJour").querySelectorAll("article"),function(a){
     a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
   });
