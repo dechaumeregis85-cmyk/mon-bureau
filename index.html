@@ -50,6 +50,11 @@ input,select{min-height:50px;border:1px solid #99aaa1;border-radius:6px;padding:
 .actions button{font-size:16px}
 .state{font-size:15px;color:var(--muted)}
 .msg{padding:12px;border-radius:7px;margin:12px 0;white-space:pre-wrap}
+.champ{position:relative}
+.choix{position:fixed;z-index:60;background:#fff;border:1px solid #99aaa1;border-radius:8px;box-shadow:0 8px 24px #142b2433;max-height:230px;overflow:auto}
+.choix button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);border-radius:0;min-height:46px;padding:10px 12px;background:#fff;font-size:17px}
+.choix button:last-child{border-bottom:0}
+.choix button:hover{background:#e7efe8}
 .err{background:var(--warnbg);color:var(--warn)}
 .okmsg{background:#e4efe6}
 .hide{display:none!important}
@@ -559,40 +564,70 @@ function chargerCommunes(){
   if(communesOfficielles)return Promise.resolve();
   if(communesChargement)return communesChargement;
   var controle=new AbortController(),timer=setTimeout(function(){controle.abort();},10000);
-  communesChargement=fetch('./communes.json?v=20261117',{signal:controle.signal}).then(function(r){
+  communesChargement=fetch('./communes.json?v=20261117c',{signal:controle.signal}).then(function(r){
     if(!r.ok)throw new Error('Communes indisponibles');return r.json();
   }).then(function(data){
     var codes=new Map(),comptes={'85':0,'79':0,'17':0};
     if(!Array.isArray(data.communes))throw new Error('Format communes invalide');
     data.communes.forEach(function(c){
       if(!c||typeof c.nom!=="string"||!c.nom.trim()||!Object.hasOwn(comptes,c.codeDepartement)||!new RegExp('^'+c.codeDepartement+'[0-9]{3}$').test(c.code))throw new Error('Commune invalide');
+      if(!Array.isArray(c.cps)||!c.cps.length||c.cps.some(function(cp){return !/^[0-9]{5}$/.test(cp);}))throw new Error('Code postal invalide');
       if(codes.has(c.code)){
         var precedent=codes.get(c.code);
         if(precedent.nom!==c.nom||precedent.codeDepartement!==c.codeDepartement)throw new Error('Code contradictoire');
       }else{codes.set(c.code,c);comptes[c.codeDepartement]++;}
     });
     if(!data.comptes||codes.size!==data.total||Object.keys(comptes).some(function(d){return !comptes[d]||comptes[d]!==data.comptes[d];}))throw new Error('Liste communes incomplète');
-    var noms=new Map();
-    codes.forEach(function(c){var n=norm(c.nom);noms.set(n,(noms.get(n)||0)+1);});
-    communesOfficielles=Array.from(codes.values()).map(function(c){return {code:c.code,valeur:c.nom+(noms.get(norm(c.nom))>1?' ('+c.codeDepartement+')':'')};});
+    var entrees=[],vus=new Set();
+    Array.from(codes.values()).forEach(function(c){
+      c.cps.forEach(function(cp){
+        var valeur=cp+' — '+c.nom;
+        if(vus.has(valeur))return;
+        vus.add(valeur);
+        entrees.push({code:c.code,cp:cp,nom:c.nom,valeur:valeur});
+      });
+    });
+    communesOfficielles=entrees;
   }).finally(function(){clearTimeout(timer);communesChargement=null;});
   return communesChargement;
 }
+function communesCorrespondantes(q){
+  if(!communesOfficielles)return [];
+  var liste=communesOfficielles;
+  if(/^[0-9]{1,5}$/.test(q))liste=liste.filter(function(c){return c.cp.indexOf(q)===0;});
+  else liste=liste.filter(function(c){return norm(c.valeur).indexOf(q)>=0;});
+  return liste.slice(0,8);
+}
 function afficherCommunes(){
-  var liste=$("#communeSuggestions"),champ=$("#nco");if(!liste||!champ)return;
+  var liste=$("#communeSuggestions"),champ=$("#nco"),panneau=$("#communeChoix");if(!liste||!champ)return;
   var valeurs=[],vus=new Set(),q=norm(champ.value.trim());
-  (communesOfficielles||[]).forEach(function(c){vus.add(norm(c.valeur));valeurs.push(c);});
   dossiers.forEach(function(d){var v=typeof d.commune==='string'?d.commune.trim():'';if(v&&!vus.has(norm(v))){vus.add(norm(v));valeurs.push({valeur:v});}});
+  (communesOfficielles||[]).forEach(function(c){var cle=norm(c.valeur);if(vus.has(cle))return;vus.add(cle);valeurs.push(c);});
   liste.innerHTML=valeurs.filter(function(c){return !q||norm(c.valeur).includes(q);})
     .sort(function(a,b){return a.valeur.localeCompare(b.valeur,'fr',{sensitivity:'base'});})
     .map(function(c){return '<option '+(c.code?'data-code="'+esc(c.code)+'" ':'')+'value="'+esc(c.valeur)+'"></option>';}).join('');
+  if(!panneau)return;
+  if(/^[0-9]{5}$/.test(q)){
+    var exactes=(communesOfficielles||[]).filter(function(c){return c.cp===q;});
+    var noms=new Set(exactes.map(function(c){return norm(c.nom);}));
+    if(noms.size===1){champ.value=exactes[0].valeur;panneau.classList.add('hide');panneau.innerHTML='';return;}
+  }
+  var trouvees=/^[0-9]{2,5}$/.test(q)?communesCorrespondantes(q):[];
+  if(!trouvees.length||q.length<2){panneau.classList.add('hide');panneau.innerHTML='';return;}
+  panneau.innerHTML=trouvees.map(function(c){return '<button type="button" data-valeur="'+esc(c.valeur)+'">'+esc(c.nom)+' <span class="sub">'+esc(c.cp)+'</span></button>';}).join('');
+  var r=champ.getBoundingClientRect();
+  panneau.style.left=r.left+'px';panneau.style.width=r.width+'px';panneau.style.top=(r.bottom+4)+'px';
+  panneau.style.maxHeight=Math.max(120,Math.min(230,window.innerHeight-r.bottom-16))+'px';
+  panneau.classList.remove('hide');
+  Array.from(panneau.querySelectorAll('button')).forEach(function(b){
+    b.onmousedown=function(ev){ev.preventDefault();champ.value=b.dataset.valeur;panneau.classList.add('hide');panneau.innerHTML='';};
+  });
 }
 function nouveauDossier(){
   var html='<h2 style="margin:0 0 12px;font-size:21px">Nouveau dossier</h2>'
     +'<label for="nc">Client</label><input id="nc" placeholder="Nom du client">'
-    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" list="travauxSuggestions" aria-describedby="suggestionsAide" autocomplete="off" placeholder="Choisir ou saisir des travaux"><datalist id="travauxSuggestions">'+suggestionsDossier("travaux")+'</datalist></div>'
-    +'<div><label for="nco">Commune</label><input id="nco" list="communeSuggestions" aria-describedby="suggestionsAide" autocomplete="off" placeholder="Choisir ou saisir une commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist></div></div>'
-    +'<p class="sub" id="suggestionsAide">Choisis une valeur déjà utilisée ou saisis une nouvelle valeur.</p>'
+    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" list="travauxSuggestions" autocomplete="off" placeholder="CLIM, PAC, SDB…"><datalist id="travauxSuggestions">'+suggestionsDossier("travaux")+'</datalist></div>'
+    +'<div class="champ"><label for="nco">Commune</label><input id="nco" list="communeSuggestions" autocomplete="off" placeholder="Code postal ou commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist><div id="communeChoix" class="choix hide"></div></div></div>'
     +'<div class="grid" style="margin-top:10px"><div><label for="nr">Date du rendez-vous</label><input id="nr" type="date" value="'+today()+'"></div>'
     +'<div><label for="nem">E-mail client</label><input id="nem" type="email" placeholder="optionnel"></div></div>'
     +'<p class="sub">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous, sauf date promise.</p>'
@@ -600,17 +635,10 @@ function nouveauDossier(){
     +'<div id="nmsg" class="msg hide" role="alert"></div>';
   $("#dlgbody").innerHTML=html;
   var dlg=$("#dlg");dlg.showModal();
-  var aide=document.createElement('p');aide.className='sub';aide.id='communesEtat';aide.setAttribute('role','status');
-  $("#nco").setAttribute('aria-describedby','suggestionsAide communesEtat');
-  $("#nco").parentNode.appendChild(aide);
-  aide.textContent='Chargement des communes des départements 85, 79 et 17… La saisie reste libre.';
-  $("#nco").oninput=afficherCommunes;afficherCommunes();
-  chargerCommunes().then(function(){
-    if(!aide.isConnected)return;afficherCommunes();
-    aide.textContent=communesOfficielles.length+' communes officielles (85, 79, 17), plus tes valeurs existantes. Saisie libre possible.';
-  }).catch(function(){
-    if(aide.isConnected)aide.textContent='Liste officielle indisponible. Tes valeurs existantes et la saisie libre restent disponibles. Réessaie en rouvrant ce formulaire.';
-  });
+  $("#nco").oninput=afficherCommunes;
+  $("#nco").onblur=function(){setTimeout(function(){var p=$("#communeChoix");if(p){p.classList.add('hide');p.innerHTML='';}},150);};
+  afficherCommunes();
+  chargerCommunes().then(afficherCommunes).catch(function(){});
   $("#nno").onclick=function(){dlg.close();};
   $("#nok").onclick=function(){
     var client=$("#nc").value.trim(),msg=$("#nmsg");
