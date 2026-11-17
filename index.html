@@ -426,7 +426,7 @@ var filtreCivilite=false;
 function renderDossiers(){
   if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";if($("#dciv"))$("#dciv").textContent="";return;}
   var q=norm(($("#q")&&$("#q").value||"").trim());
-  var sansCiv=dossiers.filter(function(d){return !d.civilite;}).length;
+  var sansCiv=dossiers.filter(function(d){return !d.civilite&&!estSociete(d.client);}).length;
   var bouton=$("#dciv");
   if(bouton){bouton.textContent="Civilité à compléter ("+sansCiv+")";bouton.setAttribute("aria-pressed",filtreCivilite?"true":"false");bouton.className=filtreCivilite?"primary":"";bouton.disabled=sansCiv===0&&!filtreCivilite;}
   var liste=dossiers.filter(function(d){
@@ -446,7 +446,7 @@ function renderDossiers(){
     var etat=etatDossier(d),ech=echeanceDe(d);
     var nb=data.tasks.filter(function(t){return t.status!=="done"&&norm(t.client)===norm(d.client);}).length;
     var m=montantTexte(d.montant);
-    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+etat.classe+'">'+esc(etat.code)+'</span>'+(d.civilite?'':'<span class="tag greytag">Civilité à compléter</span>')
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+etat.classe+'">'+esc(etat.code)+'</span>'+(d.civilite||estSociete(d.client)?'':'<span class="tag greytag">Civilité à compléter</span>')
       +'<span class="sub">'+(ech?(ech<today()&&ouvertes(d)?"Échéance dépassée : ":"Échéance : ")+frDateCourt(ech):"Échéance à renseigner")+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
       +'<div class="sub" style="margin-top:6px">Devis '+esc(String(d.statut||"?").toLowerCase())+(d.envoi?" · envoyé le "+frDateCourt(d.envoi):"")+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
@@ -487,7 +487,7 @@ function apercuDossier(d){
 }
 function lireChamps(base){
   var d=Object.assign({},base);
-  if($("#fci"))d.civilite=$("#fci").value;
+  if($("#fci"))d.civilite=estSociete(d.client)?"":$("#fci").value;
   d.statut=$("#fs").value;
   d.montant=$("#fm").value===""?null:Number($("#fm").value);
   d.envoi=$("#fe").value||null;
@@ -499,7 +499,9 @@ function lireChamps(base){
   return d;
 }
 function estSociete(nom){
-  return /\b(GAEC|SARL|EURL|SAS|SASU|SCI|EARL|SCEA|SNC|MAIRIE|COLLEGE|ECOLE|HOTEL|MUTUELLE|ASSOCIATION|POLE|SYNDICAT)\b/i.test(String(nom||""));
+  var n=String(nom||"");
+  if(/\b(GAEC|EARL|SCEA|SARL|EURL|SAS|SASU|SCI|SCP|SNC|GIE|SEM|SPL|CCAS|SIVOM|SIVU|SIAEP|EPCI|OPH|HLM)\b/i.test(n))return true;
+  return /(ASSOCIATION|ASSO\b|FONDATION|MUTUELLE|MAIRIE|COMMUNAUTE|COMMUNE|DEPARTEMENT|COLLEGE|LYCEE|ECOLE|CFA|HOPITAL|EHPAD|CLUB|COMITE|SYNDICAT|POLE|CENTRE|ETABLISSEMENT|GROUPEMENT|REGIE|RESIDENCE|ENTREPRISE|SOCIETE|CAMPING|HOTEL|BREM|ID HOUSE)/i.test(n);
 }
 function prenomNom(nom){
   return String(nom||"").trim().toLowerCase().replace(/(^|[-' ])([a-zà-ÿ])/g,function(m,a,b){return a+b.toUpperCase();});
@@ -549,7 +551,7 @@ function ouvrirDossier(id){
   var html='<h2 style="margin:0 0 6px;font-size:21px">'+esc(d.client)+'</h2>'
     +'<p class="sub" style="margin-top:0">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+(d.email?" · "+esc(d.email):"")+'</p>'
     +'<p class="sub" style="margin:0 0 4px">Rendez-vous : '+frDateCourt(d.rdv)+'</p>'
-    +'<div class="row" style="margin:0 0 6px;gap:8px;align-items:center"><label for="fci" style="margin:0">Civilité</label><select id="fci" style="width:110px"><option value=""'+(d.civilite?"":" selected")+'>—</option><option value="M."'+(d.civilite==="M."?" selected":"")+'>M.</option><option value="Mme"'+(d.civilite==="Mme"?" selected":"")+'>Mme</option></select></div>'
+    +'<div class="row" style="margin:0 0 6px;gap:8px;align-items:center"><label for="fci" style="margin:0">Civilité</label><select id="fci" style="width:110px"'+(estSociete(d.client)?' disabled title="Sans objet pour une société ou une association"':'')+'><option value=""'+(d.civilite?"":" selected")+'>—</option><option value="M."'+(d.civilite==="M."?" selected":"")+'>M.</option><option value="Mme"'+(d.civilite==="Mme"?" selected":"")+'>Mme</option></select></div>'
     +champDossier(d)
     +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
       ? '<div class="card" style="margin:12px 0;padding:12px;background:#f7f9f5">'
@@ -694,6 +696,11 @@ function nouveauDossier(){
     +'<div id="nmsg" class="msg hide" role="alert"></div>';
   $("#dlgbody").innerHTML=html;
   var dlg=$("#dlg");dlg.showModal();
+  $("#nc").oninput=function(){
+    var soc=estSociete($("#nc").value);
+    var sel=$("#nci");
+    if(sel){sel.disabled=soc;if(soc)sel.value="";sel.title=soc?"Sans objet pour une société ou une association":"";}
+  };
   $("#nco").oninput=afficherCommunes;
   $("#nco").onblur=function(){setTimeout(function(){var p=$("#communeChoix");if(p){p.classList.add('hide');p.innerHTML='';}},150);};
   afficherCommunes();
@@ -703,7 +710,7 @@ function nouveauDossier(){
     var client=$("#nc").value.trim(),msg=$("#nmsg");
     if(!client){msg.className="msg err";msg.textContent="Indique le nom du client.";return;}
     var nouveau={
-      id:"d"+Date.now(),client:client,civilite:$("#nci").value,travaux:$("#nt").value.trim(),commune:$("#nco").value.trim(),
+      id:"d"+Date.now(),client:client,civilite:estSociete(client)?"":$("#nci").value,travaux:$("#nt").value.trim(),commune:$("#nco").value.trim(),
       email:$("#nem").value.trim(),rdv:$("#nr").value||today(),datePromise:null,statut:"À faire",
       montant:null,envoi:null,relanceFaite:"",delai:7,anticipation:3,source:"application"
     };
