@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mon Bureau</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#17664f">
+<meta name="description" content="Priorités du jour, dossiers clients, charge de l’équipe et suivi des heures.">
+<link rel="icon" href="icone-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icone-apple-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mon Bureau">
 <style>
 :root{--ink:#23332f;--green:#17664f;--muted:#5b6b65;--line:#d8e0da;--bg:#f4f5ef;--warn:#8c3917;--warnbg:#fce5d9;--wait:#795512;--waitbg:#f7edcf}
 *{box-sizing:border-box}
@@ -981,6 +990,11 @@ $("#login").onclick=login;
 $("#logout").onclick=function(){localStorage.removeItem(LS_REFRESH);localStorage.removeItem(LS_DATA);token=null;showLoggedOut();};
 $("#due").value=addDays(1);
 start();
+if("serviceWorker" in navigator){
+  window.addEventListener("load",function(){
+    navigator.serviceWorker.register("service-worker.js").catch(function(){});
+  });
+}
 </script>
 </body>
 </html>
