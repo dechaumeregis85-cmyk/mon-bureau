@@ -285,9 +285,9 @@ var devisJourCategorie=null;
 function renderDevisJour(){
   if(!$("#devisJour"))return;
   var auj=today();
-  var ordre={"Devis en retard":0,"Devis à préparer":1,"Client à relancer":2,"Date manquante":3,"Date d’envoi manquante":4,"Statut à renseigner":5};
+  var ordre={"Devis en retard":0,"Client à relancer":1,"Commande à réceptionner":2,"Commande à vérifier":3,"Devis à préparer":4,"Date manquante":5,"Date d’envoi manquante":6,"Statut à renseigner":7};
   var concernes=dossiers.filter(aTraiter).sort(function(a,b){
-    var ea=etatDossier(a).code,eb=etatDossier(b).code;
+    var ea=codeDossier(a),eb=codeDossier(b);
     if(ordre[ea]!==ordre[eb])return ordre[ea]-ordre[eb];
     return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));
   });
@@ -295,11 +295,12 @@ function renderDevisJour(){
     {id:"retard",label:"En retard",codes:["Devis en retard"]},
     {id:"preparer",label:"À préparer",codes:["Devis à préparer"]},
     {id:"relancer",label:"À relancer",codes:["Client à relancer"]},
+    {id:"commande",label:"Commandes à vérifier",codes:["Commande à réceptionner","Commande à vérifier"]},
     {id:"completer",label:"À compléter",codes:["Date manquante","Date d’envoi manquante","Statut à renseigner"]}
   ];
   var visibles=[];
   var resume=categories.map(function(c){
-    var liste=concernes.filter(function(d){return c.codes.indexOf(etatDossier(d).code)!==-1;});
+    var liste=concernes.filter(function(d){return c.codes.indexOf(codeDossier(d))!==-1;});
     var actif=devisJourCategorie===c.id;
     if(actif)visibles=liste;
     return '<button type="button" class="tag" data-devis="'+c.id+'" aria-pressed="'+actif+'" aria-expanded="'+actif+'" aria-controls="devisJourListe">'+c.label+' ('+liste.length+')</button>';
@@ -308,11 +309,14 @@ function renderDevisJour(){
     +'<div class="row tabs" aria-label="Catégories de devis">'+resume+'</div>'
     +'<div id="devisJourListe"'+(devisJourCategorie?'':' hidden')+'>'
     +visibles.map(function(d){
-      var e=etatDossier(d),ech=echeanceDe(d);
+      var e=etatAffiche(d),ech=e.echeance;
       var n=ech?absJours(auj,ech):0;
       var quand=ech?((ech<auj&&e.code!=="Client à relancer")?"en retard de "+Math.abs(n)+" jour"+(Math.abs(n)>1?"s":""):"échéance "+frDateCourt(ech)):"date manquante";
+      var ligneSous=e.code.indexOf("Commande")===0
+        ? "Matériel commandé le "+frDateCourt((d.commande||{}).faite||"")+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")
+        : "Devis "+esc(String(d.statut||"?").toLowerCase())+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"");
       return '<article class="task" data-id="'+d.id+'"><div class="row between"><span class="tag '+e.classe+'">'+esc(e.code)+'</span><span class="sub">'+quand+'</span></div>'
-        +'<strong>'+esc(d.client)+'</strong><div class="sub">Devis '+esc(String(d.statut||"?").toLowerCase())+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
+        +'<strong>'+esc(d.client)+'</strong><div class="sub">'+ligneSous+'</div>'
         +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button>'+(e.code==="Client à relancer"?boutonRelance(d):"")+'</div></article>';
     }).join("")
     +(devisJourCategorie&&!visibles.length?'<p class="sub">Aucun devis dans cette catégorie.</p>':'')+'</div>';
@@ -417,7 +421,22 @@ function etatDossier(d){
   if(d.statut==="Accepté"||d.statut==="Refusé")return{code:"Clôturé",classe:"greytag"};
   return{code:"Statut à renseigner",classe:"wait"};
 }
-function aTraiter(d){var c=etatDossier(d).code;return c.charAt(0)!=="À"&&c!=="En attente"&&c!=="Relance effectuée"&&c!=="Clôturé";}
+function codeDossier(d){
+  var ac=alerteCommande(d);
+  if(ac)return ac.code;
+  return etatDossier(d).code;
+}
+function etatAffiche(d){
+  var ac=alerteCommande(d);
+  if(ac)return{code:ac.code,classe:"urgent",echeance:ac.echeance};
+  var e=etatDossier(d);
+  return{code:e.code,classe:e.classe,echeance:echeanceDe(d)};
+}
+function aTraiter(d){
+  if(alerteCommande(d))return true;
+  var c=etatDossier(d).code;
+  return c.charAt(0)!=="À"&&c!=="En attente"&&c!=="Relance effectuée"&&c!=="Clôturé";
+}
 function loadDossiers(){
   return api(DOSSPATH+":/content").then(function(j){
     if(j&&Array.isArray(j.dossiers)){dossiers=j.dossiers;renderDossiers();renderDevisJour();}
@@ -486,6 +505,13 @@ function champDossier(d){
     +'<div></div>'
     +'</div>'
     +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
+    +'<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">'
+    +'<p class="sub" style="margin:0 0 8px"><strong>Commande de matériel</strong></p>'
+    +'<div class="grid"><div><label for="fcom">Commande passée le</label><input id="fcom" type="date" value="'+esc((d.commande||{}).faite||"")+'"></div>'
+    +'<div><label for="fcomprev">Livraison annoncée</label><input id="fcomprev" type="date" value="'+esc((d.commande||{}).livraisonPrevue||"")+'"></div></div>'
+    +'<div class="grid" style="margin-top:10px"><div><label for="fcomdelai">Délai de secours (jours après commande)</label><input id="fcomdelai" type="number" min="1" max="120" value="'+(((d.commande||{}).delaiSecours==null)?10:(d.commande||{}).delaiSecours)+'"></div><div></div></div>'
+    +'<label class="chk"><input id="fcomrecue" type="checkbox"'+(((d.commande||{}).recue)?" checked":"")+"> Commande reçue</label>"
+    +'<p class="sub" id="fcomapercu" style="margin:8px 0 0"></p></div>'
     +'<p class="sub" id="fapercu" style="margin:10px 0 0"></p>'
     +'<div class="row" style="margin-top:10px" id="frelance">'+boutonRelance(d)+'</div>';
 }
@@ -506,7 +532,29 @@ function lireChamps(base){
   d.anticipation=Number($("#fa").value||3);
   d.heures=$("#fh").value===""?null:Number($("#fh").value);
   d.relanceFaite=$("#fr").checked?"Oui":"";
+  var c=$("#fcom"),cp=$("#fcomprev"),cd=$("#fcomdelai"),cr=$("#fcomrecue");
+  if(c&&cp&&cd&&cr){
+    d.commande={faite:c.value||null,livraisonPrevue:cp.value||null,delaiSecours:Number(cd.value||10),recue:cr.checked};
+  }
   return d;
+}
+function alerteCommande(d){
+  var c=d.commande||{};
+  if(!c.faite||c.recue)return null;
+  if(c.livraisonPrevue){
+    if(today()>=c.livraisonPrevue)return{code:"Commande à réceptionner",echeance:c.livraisonPrevue,retard:absJours(today(),c.livraisonPrevue)};
+    return null;
+  }
+  var secours=plusJours(c.faite,Number(c.delaiSecours||10));
+  if(today()>=secours)return{code:"Commande à vérifier",echeance:secours,retard:absJours(today(),secours)};
+  return null;
+}
+function apercuCommande(d){
+  var c=d.commande||{};
+  if(!c.faite)return "Aucune commande enregistrée.";
+  if(c.recue)return "Commande reçue. Merci.";
+  if(c.livraisonPrevue)return "Livraison annoncée le "+frDateCourt(c.livraisonPrevue)+". Alerte si non reçue à cette date.";
+  return "Sans date annoncée : vérification le "+frDateCourt(plusJours(c.faite,Number(c.delaiSecours||10)))+".";
 }
 function estSociete(nom){
   var n=String(nom||"");
@@ -576,12 +624,14 @@ function ouvrirDossier(id){
         +'</div></div>'
       : "")
     +(function(){
+      var ac=alerteCommande(d);
+      var rappel=ac?'<div class="msg err" style="margin:0 0 12px">'+esc(ac.code)+" — matériel commandé le "+frDateCourt((d.commande||{}).faite||"")+(ac.echeance?" (prévu le "+frDateCourt(ac.echeance)+")":"")+'</div>':"";
       var li=chantierDuDossier(d.id);
-      if(!li)return "";
+      if(!li)return rappel;
       var passe=li.donnees.heures;
       var prev=d.heures==null||d.heures===""?null:Number(d.heures);
       var ecart=prev==null?null:passe-prev;
-      return '<div class="card" style="margin:0 0 12px;padding:12px;background:#f7f9f5">'
+      return rappel+'<div class="card" style="margin:0 0 12px;padding:12px;background:#f7f9f5">'
         +'<p style="margin:0 0 6px"><strong>Heures du chantier '+esc(li.cle)+'</strong></p>'
         +'<p class="sub" style="margin:0">Réalisées (import) : '+heuresTexte(passe)+(prev!=null?" · prévues au devis : "+heuresTexte(prev):"")+'</p>'
         +(ecart!=null?'<p class="sub" style="margin:6px 0 0">'+(ecart>0.5?"<strong>Dépassement de "+heuresTexte(ecart)+"</strong>":ecart<-0.5?"Marge de "+heuresTexte(-ecart)+" sur le budget":"Budget respecté")+'</p>':"")
@@ -597,8 +647,12 @@ function ouvrirDossier(id){
   $("#dlgbody").innerHTML=html;
   var dlg=$("#dlg");dlg.showModal();
   $("#fapercu").textContent=apercuDossier(d);
+  if($("#fcomapercu"))$("#fcomapercu").textContent=apercuCommande(d);
   ["fs","fe","fp","fdel","fa"].forEach(function(k){
     $("#"+k).onchange=function(){$("#fapercu").textContent=apercuDossier(lireChamps(d));};
+  });
+  ["fcom","fcomprev","fcomdelai","fcomrecue"].forEach(function(k){
+    if($("#"+k))$("#"+k).onchange=function(){if($("#fcomapercu"))$("#fcomapercu").textContent=apercuCommande(lireChamps(d));};
   });
   $("#dlgno").onclick=function(){dlg.close();};
   if($("#dcreneau"))$("#dcreneau").onclick=function(){chercherPourDossier(d,dlg);};
