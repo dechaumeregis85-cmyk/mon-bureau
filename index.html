@@ -611,18 +611,19 @@ function ouvrirDossier(id){
     +'<p class="sub" style="margin:0 0 4px">Rendez-vous : '+frDateCourt(d.rdv)+'</p>'
     +'<div class="row" style="margin:0 0 6px;gap:8px;align-items:center"><label for="fci" style="margin:0">Civilité</label><select id="fci" style="width:130px"'+(estSociete(d.client)?' disabled title="Sans objet pour une société ou une association"':'')+'><option value="aucune"'+(d.civilite&&d.civilite!=="aucune"?"":" selected")+'>Aucune</option><option value="M."'+(d.civilite==="M."?" selected":"")+'>M.</option><option value="Mme"'+(d.civilite==="Mme"?" selected":"")+'>Mme</option></select></div>'
     +champDossier(d)
-    +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
-      ? '<div class="card" style="margin:12px 0;padding:12px;background:#f7f9f5">'
-        +'<p style="margin:0 0 6px"><strong>Intervention</strong></p>'
-        +'<p class="sub" style="margin:0 0 6px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")+'</p>'
-        +'<p class="sub" style="margin:0 0 10px">Intervenant'+(intervenantsDe(d).length>1?"s":"")+' : '+(intervenantsDe(d).length?esc(intervenantsDe(d).map(nomMembre).join(", ")):"à définir")+'</p>'
-        +'<button type="button" id="dcreneau">Chercher une date et un intervenant</button>'
-        +'<div id="dintervenants" style="margin-top:12px"><p class="sub" style="margin:0 0 6px"><strong>Qui réalise ce chantier ?</strong></p>'
-        +(membresActifs().length?membresActifs().map(function(m){
-            return '<label class="chk" style="margin:4px 0"><input type="checkbox" class="dinter" value="'+esc(m.id)+'"'+(intervenantsDe(d).indexOf(m.id)>=0?" checked":"")+"> "+esc(m.nom)+"</label>";
-          }).join(""):'<p class="sub" style="margin:0">Ajoute d’abord des personnes dans l’équipe.</p>')
-        +'</div></div>'
-      : "")
+    +'<div class="card" style="margin:12px 0;padding:12px;background:#f7f9f5">'
+      +'<p style="margin:0 0 6px"><strong>Intervention</strong></p>'
+      +'<p class="sub" style="margin:0 0 8px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")
+        +" — intervenant"+(intervenantsDe(d).length>1?"s":"")+" : "+(intervenantsDe(d).length?esc(intervenantsDe(d).map(nomMembre).join(", ")):"à définir")+'</p>'
+      +'<div id="dintervenants"><p class="sub" style="margin:0 0 6px"><strong>Qui réalise ce chantier ?</strong></p>'
+      +(membresActifs().length?membresActifs().map(function(m){
+          return '<label class="chk" style="margin:4px 0"><input type="checkbox" class="dinter" value="'+esc(m.id)+'"'+(intervenantsDe(d).indexOf(m.id)>=0?" checked":"")+"> "+esc(m.nom)+"</label>";
+        }).join(""):'<p class="sub" style="margin:0">Ajoute d’abord des personnes dans l’équipe.</p>')
+      +'</div>'
+      +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
+        ? '<div class="row" style="margin-top:12px"><button type="button" id="dcreneau">Chercher une date d’intervention</button></div>'
+        : '<p class="sub" style="margin:10px 0 0">Les dates se proposent une fois le devis accepté et les heures saisies.</p>')
+      +'</div>'
     +(function(){
       var ac=alerteCommande(d);
       var rappel=ac?'<div class="msg err" style="margin:0 0 12px">'+esc(ac.code)+" — matériel commandé le "+frDateCourt((d.commande||{}).faite||"")+(ac.echeance?" (prévu le "+frDateCourt(ac.echeance)+")":"")+'</div>':"";
