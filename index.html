@@ -543,11 +543,23 @@ function ouvrirDossier(id){
     });
   };
 }
+// Suggestions calculées à chaque ouverture depuis les dossiers en mémoire.
+// La normalisation ne sert qu'à dédoublonner : aucune donnée n'est modifiée.
+function suggestionsDossier(champ){
+  var vus=new Set(),valeurs=[];
+  dossiers.forEach(function(d){
+    var valeur=typeof d[champ]==="string"?d[champ].trim():"",cle=norm(valeur);
+    if(valeur&&!vus.has(cle)){vus.add(cle);valeurs.push(valeur);}
+  });
+  return valeurs.sort(function(a,b){return a.localeCompare(b,"fr",{sensitivity:"base"});})
+    .map(function(v){return '<option value="'+esc(v)+'"></option>';}).join("");
+}
 function nouveauDossier(){
   var html='<h2 style="margin:0 0 12px;font-size:21px">Nouveau dossier</h2>'
     +'<label for="nc">Client</label><input id="nc" placeholder="Nom du client">'
-    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" placeholder="CLIM, PAC, SDB…"></div>'
-    +'<div><label for="nco">Commune</label><input id="nco" placeholder="85200 — …"></div></div>'
+    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" list="travauxSuggestions" aria-describedby="suggestionsAide" autocomplete="off" placeholder="Choisir ou saisir des travaux"><datalist id="travauxSuggestions">'+suggestionsDossier("travaux")+'</datalist></div>'
+    +'<div><label for="nco">Commune</label><input id="nco" list="communeSuggestions" aria-describedby="suggestionsAide" autocomplete="off" placeholder="Choisir ou saisir une commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist></div></div>'
+    +'<p class="sub" id="suggestionsAide">Choisis une valeur déjà utilisée ou saisis une nouvelle valeur.</p>'
     +'<div class="grid" style="margin-top:10px"><div><label for="nr">Date du rendez-vous</label><input id="nr" type="date" value="'+today()+'"></div>'
     +'<div><label for="nem">E-mail client</label><input id="nem" type="email" placeholder="optionnel"></div></div>'
     +'<p class="sub">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous, sauf date promise.</p>'
