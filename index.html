@@ -430,7 +430,7 @@ function renderDossiers(){
   var bouton=$("#dciv");
   if(bouton){bouton.textContent="Civilité à compléter ("+sansCiv+")";bouton.setAttribute("aria-pressed",filtreCivilite?"true":"false");bouton.className=filtreCivilite?"primary":"";bouton.disabled=sansCiv===0&&!filtreCivilite;}
   var liste=dossiers.filter(function(d){
-    if(filtreCivilite&&d.civilite)return false;
+    if(filtreCivilite&&(d.civilite||estSociete(d.client)))return false;
     if(!q)return true;
     return norm(d.client+" "+(d.commune||"")+" "+(d.travaux||"")).indexOf(q)>=0;
   });
