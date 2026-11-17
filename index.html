@@ -568,7 +568,12 @@ function ouvrirDossier(id){
         +'<p style="margin:0 0 6px"><strong>Intervention</strong></p>'
         +'<p class="sub" style="margin:0 0 6px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")+'</p>'
         +'<p class="sub" style="margin:0 0 10px">Intervenant'+(intervenantsDe(d).length>1?"s":"")+' : '+(intervenantsDe(d).length?esc(intervenantsDe(d).map(nomMembre).join(", ")):"à définir")+'</p>'
-        +'<button type="button" id="dcreneau">Chercher une date et un intervenant</button></div>'
+        +'<button type="button" id="dcreneau">Chercher une date et un intervenant</button>'
+        +'<div id="dintervenants" style="margin-top:12px"><p class="sub" style="margin:0 0 6px"><strong>Qui réalise ce chantier ?</strong></p>'
+        +(membresActifs().length?membresActifs().map(function(m){
+            return '<label class="chk" style="margin:4px 0"><input type="checkbox" class="dinter" value="'+esc(m.id)+'"'+(intervenantsDe(d).indexOf(m.id)>=0?" checked":"")+"> "+esc(m.nom)+"</label>";
+          }).join(""):'<p class="sub" style="margin:0">Ajoute d’abord des personnes dans l’équipe.</p>')
+        +'</div></div>'
       : "")
     +(function(){
       var li=chantierDuDossier(d.id);
@@ -597,6 +602,17 @@ function ouvrirDossier(id){
   });
   $("#dlgno").onclick=function(){dlg.close();};
   if($("#dcreneau"))$("#dcreneau").onclick=function(){chercherPourDossier(d,dlg);};
+  Array.prototype.forEach.call(document.querySelectorAll(".dinter"),function(c){
+    c.onchange=function(){
+      var choisis=[];
+      Array.prototype.forEach.call(document.querySelectorAll(".dinter"),function(x){if(x.checked)choisis.push(x.value);});
+      saveDossiers(function(liste){
+        for(var i=0;i<liste.length;i++)if(liste[i].id===d.id)liste[i].intervenants=choisis;
+      }).then(function(){
+        ok("Intervenant"+(choisis.length>1?"s":"")+" enregistré"+(choisis.length>1?"s":"")+" : "+(choisis.length?choisis.map(nomMembre).join(", "):"aucun"),MSGS.list);
+      }).catch(function(e){fail(String(e.message),MSGS.list);});
+    };
+  });
   var br=$("#frelance button[data-relance]");
   if(br)br.onclick=function(){window.open(lienRelance(d),"_blank","noopener");};
   $("#dlgbody").querySelector("button[data-new]").onclick=function(){
@@ -964,17 +980,28 @@ function renderCharge(){
   renderPlanning();
   renderConges();
 }
+function lundiDeLaSemaine(iso){
+  var d=new Date(iso+"T12:00:00");
+  var j=d.getDay();                 /* 0 = dimanche */
+  var recul=(j===0?6:j-1);
+  d.setDate(d.getDate()-recul);
+  return d.toISOString().slice(0,10);
+}
 function renderPlanning(){
   if(!$("#planningGrille"))return;
   var actifs=membresActifs();
   if(!actifs.length){$("#planningGrille").innerHTML='<p class="sub">Ajoute d’abord les personnes de l’équipe.</p>';return;}
-  var jours=[],j=today();
-  while(jours.length<5&&jours.length<60){
+  var jours=[],j=lundiDeLaSemaine(today());
+  while(jours.length<20){                    /* 4 semaines de jours ouvrés */
     if(estOuvre(j))jours.push(j);
     j=plusJours(j,1);
   }
-  var html='<div class="table-wrap"><table><thead><tr><th>Intervenant</th>'+jours.map(function(x){
-    return "<th>"+new Date(x+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+"</th>";
+  var html='<p class="sub">4 semaines à partir du lundi '+frDateCourt(jours[0])+'. Fais défiler pour voir toute la période.</p>';
+  html+='<div class="table-wrap"><table><thead><tr><th>Intervenant</th>'+jours.map(function(x){
+    var d=new Date(x+"T12:00:00");
+    var fete=FERIES[x];
+    return "<th"+(fete?' title="'+esc(fete)+'"':'')+">"+d.toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit"})+"<br><span class=\"sub\">"+
+      d.toLocaleDateString("fr-FR",{month:"short"})+"</span></th>";
   }).join("")+"</tr></thead><tbody>";
   actifs.forEach(function(m){
     html+="<tr><td><strong>"+esc(m.nom)+"</strong></td>";
@@ -983,7 +1010,16 @@ function renderPlanning(){
       var faits=dossiers.filter(function(d){
         return d.statut==="Accepté"&&d.debutPrevu&&d.finPrevue&&intervenantsDe(d).indexOf(m.id)>=0&&x>=d.debutPrevu&&x<=d.finPrevue;
       });
-      html+="<td>"+(faits.length?faits.map(function(d){return '<span class="tag oktag">'+esc(d.client)+"</span>";}).join(" "):'<span class="tag">libre</span>')+"</td>";
+      var charge=0;
+      dossiers.forEach(function(d){
+        if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
+        if(intervenantsDe(d).indexOf(m.id)<0)return;
+        if(x<d.debutPrevu||x>d.finPrevue)return;
+        var nbJ=joursOuvresEntre(d.debutPrevu,d.finPrevue).length||1;
+        charge+=Number(d.heures)/(nbJ*intervenantsDe(d).length);
+      });
+      html+="<td>"+(faits.length?faits.map(function(d){return '<span class="tag oktag">'+esc(d.client)+"</span>";}).join(" "):'<span class="tag">libre</span>')
+        +'<br><span class="sub">'+(charge>0?heuresTexte(charge)+" / "+heuresTexte(heuresJour(x)):"—")+"</span></td>";
     });
     html+="</tr>";
   });
