@@ -304,7 +304,7 @@ function renderDevisJour(){
       var quand=ech?((ech<auj&&e.code!=="Client à relancer")?"en retard de "+Math.abs(n)+" jour"+(Math.abs(n)>1?"s":""):"échéance "+frDateCourt(ech)):"date manquante";
       return '<article class="task" data-id="'+d.id+'"><div class="row between"><span class="tag '+e.classe+'">'+esc(e.code)+'</span><span class="sub">'+quand+'</span></div>'
         +'<strong>'+esc(d.client)+'</strong><div class="sub">Devis '+esc(String(d.statut||"?").toLowerCase())+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
-        +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
+        +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button>'+(e.code==="Client à relancer"?boutonRelance(d):"")+'</div></article>';
     }).join("")
     +(devisJourCategorie&&!visibles.length?'<p class="sub">Aucun devis dans cette catégorie.</p>':'')+'</div>';
   Array.prototype.forEach.call($("#devisJour").querySelectorAll("button[data-devis]"),function(b){
@@ -316,7 +316,12 @@ function renderDevisJour(){
     };
   });
   Array.prototype.forEach.call($("#devisJour").querySelectorAll("article"),function(a){
-    a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
+    var boutons=a.querySelectorAll("button");
+    boutons[0].onclick=function(){ouvrirDossier(a.dataset.id);};
+    if(boutons[1])boutons[1].onclick=function(){
+      var d=dossiers.filter(function(x){return x.id===a.dataset.id;})[0];
+      if(d)window.open(lienRelance(d),"_blank","noopener");
+    };
   });
 }
 function absJours(a,b){return Math.round((new Date(b+"T12:00:00")-new Date(a+"T12:00:00"))/86400000);}
@@ -466,7 +471,8 @@ function champDossier(d){
     +'<div></div>'
     +'</div>'
     +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
-    +'<p class="sub" id="fapercu" style="margin:10px 0 0"></p>';
+    +'<p class="sub" id="fapercu" style="margin:10px 0 0"></p>'
+    +'<div class="row" style="margin-top:10px" id="frelance">'+boutonRelance(d)+'</div>';
 }
 function apercuDossier(d){
   var ech=echeanceDe(d),rel=relanceDe(d);
@@ -485,6 +491,26 @@ function lireChamps(base){
   d.heures=$("#fh").value===""?null:Number($("#fh").value);
   d.relanceFaite=$("#fr").checked?"Oui":"";
   return d;
+}
+function texteRelance(d){
+  var travaux=d.travaux?String(d.travaux):"votre projet";
+  var objet="Votre devis "+travaux;
+  var intro="Bonjour"+(d.client?" "+d.client:"")+",";
+  var corps=intro+"\n\nJe reviens vers vous au sujet de votre devis "+travaux
+    +(d.commune?" pour "+d.commune:"")
+    +(d.envoi?" transmis le "+frDateCourt(d.envoi):"")+".\n\n"
+    +"Avez-vous pu en prendre connaissance ? Je reste disponible pour l’ajuster ou répondre à vos questions.\n\n"
+    +"Bien cordialement,";
+  return {objet:objet,corps:corps};
+}
+function lienRelance(d){
+  var t=texteRelance(d);
+  return "https://outlook.office.com/mail/deeplink/compose?to="+encodeURIComponent(d.email||"")
+    +"&subject="+encodeURIComponent(t.objet)+"&body="+encodeURIComponent(t.corps);
+}
+function boutonRelance(d){
+  if(!d.email)return '<span class="sub">E-mail client manquant</span>';
+  return '<button type="button" data-relance="'+esc(d.id)+'">Préparer la relance</button>';
 }
 function ouvrirDossier(id){
   var d=dossiers.filter(function(x){return x.id===id;})[0];
@@ -527,6 +553,8 @@ function ouvrirDossier(id){
   });
   $("#dlgno").onclick=function(){dlg.close();};
   if($("#dcreneau"))$("#dcreneau").onclick=function(){chercherPourDossier(d,dlg);};
+  var br=$("#frelance button[data-relance]");
+  if(br)br.onclick=function(){window.open(lienRelance(d),"_blank","noopener");};
   $("#dlgbody").querySelector("button[data-new]").onclick=function(){
     dlg.close();
     showEcran("today");
