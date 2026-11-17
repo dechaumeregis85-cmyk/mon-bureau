@@ -71,6 +71,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
   </section>
 
   <section id="app" class="hide">
+    <div class="card" id="devisJour"></div>
     <form class="card" id="addform" autocomplete="off" novalidate>
       <label for="quick">Nouvelle action</label>
       <input id="quick" placeholder="Quelques mots sur ce qu’il faut faire" maxlength="180" required>
@@ -257,7 +258,46 @@ function askDate(title,dlabel,value,cb){
   $("#dlgok").onclick=function(){var v=$("#dlgd").value;d.close();if(v)cb(v);};
   $("#dlgno").onclick=function(){d.close();};
 }
+function renderDevisJour(){
+  if(!$("#devisJour"))return;
+  var auj=today();
+  var ordre={"Devis en retard":0,"Devis à préparer":1,"Client à relancer":2,"Date manquante":3,"Date d’envoi manquante":4,"Statut à renseigner":5};
+  var concernes=dossiers.filter(aTraiter).sort(function(a,b){
+    var ea=etatDossier(a).code,eb=etatDossier(b).code;
+    if(ordre[ea]!==ordre[eb])return ordre[ea]-ordre[eb];
+    return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));
+  });
+  var retards=concernes.filter(function(d){return etatDossier(d).code==="Devis en retard";}).length;
+  var aPreparer=concernes.filter(function(d){return etatDossier(d).code==="Devis à préparer";}).length;
+  var relances=concernes.filter(function(d){return etatDossier(d).code==="Client à relancer";}).length;
+  var titre='<h2 style="margin:0 0 4px;font-size:21px">Devis et relances du jour</h2>';
+  if(!concernes.length){
+    $("#devisJour").innerHTML=titre+'<p class="sub" style="margin:0">Rien à traiter côté devis aujourd’hui. Les prochaines échéances sont plus loin.</p>';
+    return;
+  }
+  var resume="";
+  if(retards)resume+='<span class="tag urgent">'+retards+" en retard</span> ";
+  if(aPreparer)resume+='<span class="tag wait">'+aPreparer+" à préparer</span> ";
+  if(relances)resume+='<span class="tag urgent">'+relances+" à relancer</span> ";
+  var autres=concernes.length-retards-aPreparer-relances;
+  if(autres>0)resume+='<span class="tag">'+autres+" à compléter</span>";
+  $("#devisJour").innerHTML=titre+'<p style="margin:0 0 12px">'+resume+"</p>"
+    +concernes.slice(0,12).map(function(d){
+      var e=etatDossier(d),ech=echeanceDe(d);
+      var n=ech?absJours(auj,ech):0;
+      var quand=ech?((ech<auj&&e.code!=="Client à relancer")?"en retard de "+Math.abs(n)+" jour"+(Math.abs(n)>1?"s":""):"échéance "+frDateCourt(ech)):"date manquante";
+      return '<article class="task" data-id="'+d.id+'"><div class="row between"><span class="tag '+e.classe+'">'+esc(e.code)+'</span><span class="sub">'+quand+'</span></div>'
+        +'<strong>'+esc(d.client)+'</strong><div class="sub">Devis '+esc(String(d.statut||"?").toLowerCase())+" · "+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
+        +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
+    }).join("")
+    +(concernes.length>12?'<p class="sub">'+(concernes.length-12)+" autre(s) dossier(s) à traiter — voir l’onglet Mes dossiers.</p>":"");
+  Array.prototype.forEach.call($("#devisJour").querySelectorAll("article"),function(a){
+    a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
+  });
+}
+function absJours(a,b){return Math.round((new Date(b+"T12:00:00")-new Date(a+"T12:00:00"))/86400000);}
 function render(){
+  renderDevisJour();
   var counts={todo:0,waiting:0,done:0};
   data.tasks.forEach(function(t){counts[t.status]=(counts[t.status]||0)+1;});
   $("#tabs").innerHTML=[["todo","À faire"],["waiting","En attente"],["done","Terminées"]].map(function(p){
@@ -342,7 +382,7 @@ function etatDossier(d){
 function aTraiter(d){var c=etatDossier(d).code;return c.charAt(0)!=="À"&&c!=="En attente"&&c!=="Relance effectuée"&&c!=="Clôturé";}
 function loadDossiers(){
   return api(DOSSPATH+":/content").then(function(j){
-    if(j&&Array.isArray(j.dossiers)){dossiers=j.dossiers;renderDossiers();}
+    if(j&&Array.isArray(j.dossiers)){dossiers=j.dossiers;renderDossiers();renderDevisJour();}
   });
 }
 function saveDossiers(modifier){
@@ -350,7 +390,7 @@ function saveDossiers(modifier){
     var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
     modifier(paquet.dossiers);
     return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
-      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();});
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();});
   });
 }
 function renderDossiers(){
