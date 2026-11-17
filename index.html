@@ -110,7 +110,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <label for="q">Rechercher un dossier</label>
       <input id="q" placeholder="Nom du client ou commune" autocomplete="off">
       <p class="state" id="dcount" style="margin-top:10px"></p>
-      <div class="row" style="margin-top:10px"><button class="primary" type="button" id="dnew">Créer un dossier</button></div>
+      <div class="row" style="margin-top:10px"><button class="primary" type="button" id="dnew">Créer un dossier</button><button type="button" id="dciv" aria-pressed="false"></button></div>
     </div>
     <div class="card" id="dlist"></div>
     <p class="state">Ces dossiers sont enregistrés dans ton OneDrive. Ton fichier Excel n’a pas été modifié et n’a plus besoin d’être tenu à jour.</p>
@@ -422,10 +422,15 @@ function saveDossiers(modifier){
       .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();});
   });
 }
+var filtreCivilite=false;
 function renderDossiers(){
-  if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";return;}
+  if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";if($("#dciv"))$("#dciv").textContent="";return;}
   var q=norm(($("#q")&&$("#q").value||"").trim());
+  var sansCiv=dossiers.filter(function(d){return !d.civilite;}).length;
+  var bouton=$("#dciv");
+  if(bouton){bouton.textContent="Civilité à compléter ("+sansCiv+")";bouton.setAttribute("aria-pressed",filtreCivilite?"true":"false");bouton.className=filtreCivilite?"primary":"";bouton.disabled=sansCiv===0&&!filtreCivilite;}
   var liste=dossiers.filter(function(d){
+    if(filtreCivilite&&d.civilite)return false;
     if(!q)return true;
     return norm(d.client+" "+(d.commune||"")+" "+(d.travaux||"")).indexOf(q)>=0;
   });
@@ -441,7 +446,7 @@ function renderDossiers(){
     var etat=etatDossier(d),ech=echeanceDe(d);
     var nb=data.tasks.filter(function(t){return t.status!=="done"&&norm(t.client)===norm(d.client);}).length;
     var m=montantTexte(d.montant);
-    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+etat.classe+'">'+esc(etat.code)+'</span>'
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+etat.classe+'">'+esc(etat.code)+'</span>'+(d.civilite?'':'<span class="tag greytag">Civilité à compléter</span>')
       +'<span class="sub">'+(ech?(ech<today()&&ouvertes(d)?"Échéance dépassée : ":"Échéance : ")+frDateCourt(ech):"Échéance à renseigner")+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
       +'<div class="sub" style="margin-top:6px">Devis '+esc(String(d.statut||"?").toLowerCase())+(d.envoi?" · envoyé le "+frDateCourt(d.envoi):"")+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
@@ -1055,6 +1060,7 @@ function showEcran(nom){
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
 if($("#q"))$("#q").oninput=function(){renderDossiers();};
 if($("#dnew"))$("#dnew").onclick=nouveauDossier;
+if($("#dciv"))$("#dciv").onclick=function(){filtreCivilite=!filtreCivilite;renderDossiers();};
 if($("#fichier"))$("#fichier").onchange=function(e){if(e.target.files&&e.target.files[0])importerFichier(e.target.files[0]);};
 if($("#aadd"))$("#aadd").onclick=function(){
   var deb=$("#adeb").value,fin=$("#afin").value,nb=Number($("#anb").value||1);
