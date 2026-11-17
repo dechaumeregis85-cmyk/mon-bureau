@@ -680,8 +680,8 @@ function afficherCommunes(){
 function nouveauDossier(){
   var html='<h2 style="margin:0 0 12px;font-size:21px">Nouveau dossier</h2>'
     +'<label for="nc">Client</label><div class="row" style="flex-wrap:nowrap;gap:8px"><select id="nci" aria-label="Civilité" style="width:110px;flex:0 0 110px"><option value="">—</option><option value="M.">M.</option><option value="Mme">Mme</option></select><input id="nc" placeholder="Nom du client"></div>'
-    +'<div class="grid" style="margin-top:10px"><div><label for="nt">Travaux</label><input id="nt" list="travauxSuggestions" autocomplete="off" placeholder="CLIM, PAC, SDB…"><datalist id="travauxSuggestions">'+suggestionsDossier("travaux")+'</datalist></div>'
-    +'<div class="champ"><label for="nco">Commune</label><input id="nco" list="communeSuggestions" autocomplete="off" placeholder="Code postal ou commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist><div id="communeChoix" class="choix hide"></div></div></div>'
+    +'<div class="grid" style="margin-top:10px;grid-template-columns:1fr 1fr"><div><label for="nt">Travaux</label><input id="nt" list="travauxSuggestions" autocomplete="off" placeholder="CLIM, PAC, SDB…"><datalist id="travauxSuggestions">'+suggestionsDossier("travaux")+'</datalist></div>'
+    +'<div class="champ"><label for="nco">Commune</label><input id="nco" list="communeSuggestions" autocomplete="off" placeholder="CP ou commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist><div id="communeChoix" class="choix hide"></div></div></div>'
     +'<div class="grid" style="margin-top:10px"><div><label for="nr">Date du rendez-vous</label><input id="nr" type="date" value="'+today()+'"></div>'
     +'<div><label for="nem">E-mail client</label><input id="nem" type="email" placeholder="optionnel"></div></div>'
     +'<p class="sub">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous, sauf date promise.</p>'
