@@ -45,6 +45,9 @@ input,select{min-height:50px;border:1px solid #99aaa1;border-radius:6px;padding:
 .doss{border-top:1px solid var(--line);padding:14px 0}
 .doss:first-child{border-top:0}
 .doss h3{margin:6px 0 4px;font-size:19px}
+.table-wrap{overflow:auto}
+#planningGrille table{border-collapse:collapse;white-space:nowrap;width:100%}
+#planningGrille th,#planningGrille td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;font-size:16px}
 .sub{font-size:16px;color:var(--muted)}
 .tabs button[aria-pressed=true]{background:#dcebe1;border-color:var(--green)}
 .actions button{font-size:16px}
@@ -123,11 +126,12 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     </div>
     <div class="card">
       <h2 style="margin-top:0">Équipe et horaires</h2>
-      <div class="grid" style="margin-top:6px">
-        <div><label for="rp">Personnes permanentes</label><input id="rp" type="number" min="1" max="30" value="5"></div>
-        <div><label for="rr">Renforts confirmés</label><input id="rr" type="number" min="0" max="20" value="0"></div>
+      <div id="membresListe"></div>
+      <div class="grid" style="margin-top:12px">
+        <div><label for="mn">Ajouter une personne</label><input id="mn" placeholder="Prénom et nom"></div>
+        <div style="align-self:end"><button type="button" id="madd">Ajouter</button></div>
       </div>
-      <div class="grid" style="margin-top:10px">
+      <div class="grid" style="margin-top:12px">
         <div><label for="hl">Lundi à jeudi (h/jour)</label><input id="hl" type="number" step="0.5" min="0" max="12" value="8"></div>
         <div><label for="hv">Vendredi (h/jour)</label><input id="hv" type="number" step="0.5" min="0" max="12" value="7"></div>
       </div>
@@ -137,14 +141,19 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <div class="card">
       <h2 style="margin-top:0">Absences et congés</h2>
       <div class="grid" style="margin-top:6px">
+        <div><label for="ap">Qui est absent</label><select id="ap"></select></div>
+        <div><label for="anb">Type</label><select id="anb"><option value="absence">Absence</option><option value="conges">Congés</option></select></div>
+      </div>
+      <div class="grid" style="margin-top:10px">
         <div><label for="adeb">Du</label><input id="adeb" type="date"></div>
         <div><label for="afin">Au</label><input id="afin" type="date"></div>
       </div>
-      <div class="grid" style="margin-top:10px">
-        <div><label for="anb">Personnes absentes</label><input id="anb" type="number" min="1" max="30" value="1"></div>
-        <div style="align-self:end"><button class="primary" type="button" id="aadd">Ajouter l’absence</button></div>
-      </div>
+      <div class="row" style="margin-top:12px"><button class="primary" type="button" id="aadd">Ajouter l’absence</button></div>
       <div id="congesListe" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Planning de la semaine</h2>
+      <div id="planningGrille"></div>
     </div>
     <div class="card">
       <h2 style="margin-top:0">Chantiers acceptés</h2>
@@ -557,8 +566,9 @@ function ouvrirDossier(id){
     +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
       ? '<div class="card" style="margin:12px 0;padding:12px;background:#f7f9f5">'
         +'<p style="margin:0 0 6px"><strong>Intervention</strong></p>'
-        +'<p class="sub" style="margin:0 0 10px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")+'</p>'
-        +'<button type="button" id="dcreneau">Chercher une date d’intervention</button></div>'
+        +'<p class="sub" style="margin:0 0 6px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")+'</p>'
+        +'<p class="sub" style="margin:0 0 10px">Intervenant'+(intervenantsDe(d).length>1?"s":"")+' : '+(intervenantsDe(d).length?esc(intervenantsDe(d).map(nomMembre).join(", ")):"à définir")+'</p>'
+        +'<button type="button" id="dcreneau">Chercher une date et un intervenant</button></div>'
       : "")
     +(function(){
       var li=chantierDuDossier(d.id);
@@ -730,7 +740,7 @@ function chargeAcceptee(){
   return dossiers.filter(function(d){return d.statut==="Accepté";});
 }
 function capaciteHebdo(r){
-  var eq=r.equipe||{},n=Number(eq.permanents||5)+Number(eq.renforts||0);
+  var eq=r.equipe||{},n=membresActifs().length;
   if(n<1)n=1;
   var hJour=Number(eq.heuresLunJeu==null?8:eq.heuresLunJeu)*4+Number(eq.heuresVen==null?7:eq.heuresVen);
   return n*hJour;
@@ -747,65 +757,97 @@ function estOuvre(iso){
   if(j===0||j===6)return false;
   return !FERIES[iso];
 }
-function personnesEquipe(){var eq=reglages.equipe||{};return Number(eq.permanents||5)+Number(eq.renforts||0);}
+function membres(){var eq=reglages.equipe||{};return eq.membres||[];}
+function membresActifs(){
+  return membres().filter(function(m){return m.actif!==false&&(!m.renfort||m.confirme===true);});
+}
+function nomMembre(id){
+  var m=membres().filter(function(x){return x.id===id;})[0];
+  return m?m.nom:id;
+}
+function personnesEquipe(){return membresActifs().length;}
 function heuresJour(iso){
   var eq=reglages.equipe||{};
   return jourSemaine(iso)===5?Number(eq.heuresVen==null?7:eq.heuresVen):Number(eq.heuresLunJeu==null?8:eq.heuresLunJeu);
 }
-function absentsLe(iso){
-  var n=0;
-  (reglages.conges||[]).forEach(function(c){
-    if(c.debut&&c.fin&&iso>=c.debut&&iso<=c.fin)n+=Number(c.absents||1);
+function absenteLe(membreId,iso){
+  return (reglages.conges||[]).some(function(c){
+    return c.membre===membreId&&c.debut&&c.fin&&iso>=c.debut&&iso<=c.fin;
   });
-  return n;
+}
+function absentsLe(iso){
+  return membresActifs().filter(function(m){return absenteLe(m.id,iso);}).length;
 }
 function capaciteJour(iso){
   if(!estOuvre(iso))return 0;
-  var p=personnesEquipe()-absentsLe(iso);
-  if(p<0)p=0;
-  return p*heuresJour(iso);
+  var dispo=membresActifs().filter(function(m){return !absenteLe(m.id,iso);}).length;
+  return dispo*heuresJour(iso);
 }
 function joursOuvresEntre(deb,fin){
   var out=[],j=deb,g=0;
   while(j<=fin&&g<400){if(estOuvre(j))out.push(j);j=plusJours(j,1);g++;}
   return out;
 }
+function intervenantsDe(d){
+  return (d.intervenants||[]).filter(function(id){return !!id;});
+}
 function chargesPlanifiees(){
   var map={};
   dossiers.forEach(function(d){
     if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
+    var eq=intervenantsDe(d);
+    if(!eq.length)return;
     var js=joursOuvresEntre(d.debutPrevu,d.finPrevue);
     if(!js.length)return;
-    var par=Number(d.heures)/js.length;
-    js.forEach(function(j){map[j]=(map[j]||0)+par;});
+    var par=Number(d.heures)/(js.length*eq.length);
+    js.forEach(function(j){eq.forEach(function(id){map[id+"|"+j]=(map[id+"|"+j]||0)+par;});});
   });
   return map;
 }
-function dispoJour(iso,plan){
-  var c=capaciteJour(iso);
-  if(c<=0)return 0;
-  var libre=c-(plan[iso]||0);
+function dispoMembre(m,iso,plan){
+  if(!estOuvre(iso)||absenteLe(m.id,iso))return 0;
+  var libre=heuresJour(iso)-(plan[m.id+"|"+iso]||0);
   return libre>0?libre:0;
 }
-function chercherCreneau(heures,debutMin){
+function dispoJour(iso,plan){
+  return membresActifs().reduce(function(s,m){return s+dispoMembre(m,iso,plan);},0);
+}
+function chercherCreneau(heures,debutMin,nbPersonnes){
   var plan=chargesPlanifiees(),reste=Number(heures);
   if(!(reste>0))return null;
-  var jour=debutMin,debut=null,fin=null,jours=0;
+  var nb=Math.max(1,Math.min(Number(nbPersonnes)||1,membresActifs().length));
+  var jour=debutMin,debut=null,fin=null,jours=0,choisis=null;
   for(var i=0;i<600;i++){
-    var dispo=dispoJour(jour,plan);
-    if(dispo>0){
-      if(!debut)debut=jour;
-      var pris=Math.min(dispo,reste);
-      reste-=pris;fin=jour;jours++;
-      plan[jour]=(plan[jour]||0)+pris;
+    if(!choisis){
+      var candidats=membresActifs().map(function(m){return{m:m,d:dispoMembre(m,jour,plan)};})
+        .filter(function(x){return x.d>0;})
+        .sort(function(a,b){return b.d-a.d;});
+      if(candidats.length)choisis=candidats.slice(0,nb).map(function(x){return x.m;});
+    }
+    if(choisis){
+      var consomme=0;
+      for(var c=0;c<choisis.length&&reste>0.001;c++){
+        var libre=dispoMembre(choisis[c],jour,plan);
+        if(libre<=0)continue;
+        var pris=Math.min(libre,reste);
+        plan[choisis[c].id+"|"+jour]=(plan[choisis[c].id+"|"+jour]||0)+pris;
+        reste-=pris;consomme+=pris;
+      }
+      if(consomme>0){
+        if(!debut)debut=jour;
+        fin=jour;jours++;
+      }
     }
     if(reste<=0.001)break;
     jour=plusJours(jour,1);
   }
   if(reste>0.001)return null;
-  return {debut:debut,fin:fin,jours:jours};
+  return {debut:debut,fin:fin,jours:jours,membres:choisis?choisis.map(function(m){return m.id;}):[]};
 }
-function jourLisible(iso){return frDate(iso);}
+function jourLisible(iso){
+  var d=new Date(iso+"T12:00:00");
+  return d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+}
 function chargerCreneauHtml(prop,heures){
   return '<p>Pour <strong>'+heuresTexte(heures)+'</strong> de main-d’œuvre, la première période compatible est :</p>'
     +'<p style="font-size:20px"><strong>du '+jourLisible(prop.debut)+' au '+jourLisible(prop.fin)+'</strong></p>'
@@ -823,10 +865,57 @@ function saveReglages(){
 }
 function remplirEquipe(){
   var eq=reglages.equipe||{};
-  if($("#rp"))$("#rp").value=eq.permanents==null?5:eq.permanents;
-  if($("#rr"))$("#rr").value=eq.renforts==null?0:eq.renforts;
   if($("#hl"))$("#hl").value=eq.heuresLunJeu==null?8:eq.heuresLunJeu;
   if($("#hv"))$("#hv").value=eq.heuresVen==null?7:eq.heuresVen;
+  renderMembres();
+}
+function enregistrer(cb){
+  saveReglages().then(function(){renderCharge();renderMembres();if(cb)cb();}).catch(function(e){fail(String(e.message));});
+}
+function renderMembres(){
+  if(!$("#membresListe"))return;
+  var ms=membres();
+  $("#membresListe").innerHTML=ms.length?ms.map(function(m){
+    var etat=m.renfort?(m.confirme?"renfort confirmé":"renfort non confirmé"):"permanent";
+    return '<div style="border-top:1px solid var(--line);padding:10px 0">'
+      +'<div class="row between"><input data-mid="'+esc(m.id)+'" class="mnom" value="'+esc(m.nom)+'" maxlength="40">'
+      +'<button type="button" data-suppr="'+esc(m.id)+'">Retirer</button></div>'
+      +'<div class="row" style="margin-top:8px"><label class="chk" style="margin:0"><input type="checkbox" data-renfort="'+esc(m.id)+'"'+(m.renfort?" checked":"")+"> Renfort</label>"
+      +(m.renfort?'<label class="chk" style="margin:0"><input type="checkbox" data-confirme="'+esc(m.id)+'"'+(m.confirme?" checked":"")+"> Disponibilité confirmée</label>":"")
+      +'<span class="sub">'+etat+"</span></div></div>";
+  }).join(""):'<p class="sub">Aucune personne enregistrée.</p>';
+  Array.prototype.forEach.call($("#membresListe").querySelectorAll(".mnom"),function(i){
+    i.onchange=function(){
+      membres().forEach(function(m){if(m.id===i.dataset.mid)m.nom=i.value.trim()||m.nom;});
+      enregistrer();
+    };
+  });
+  Array.prototype.forEach.call($("#membresListe").querySelectorAll("[data-renfort]"),function(c){
+    c.onchange=function(){
+      membres().forEach(function(m){if(m.id===c.dataset.renfort){m.renfort=c.checked;if(!c.checked)m.confirme=false;}});
+      enregistrer();
+    };
+  });
+  Array.prototype.forEach.call($("#membresListe").querySelectorAll("[data-confirme]"),function(c){
+    c.onchange=function(){
+      membres().forEach(function(m){if(m.id===c.dataset.confirme)m.confirme=c.checked;});
+      enregistrer();
+    };
+  });
+  Array.prototype.forEach.call($("#membresListe").querySelectorAll("[data-suppr]"),function(b){
+    b.onclick=function(){
+      reglages.equipe.membres=membres().filter(function(m){return m.id!==b.dataset.suppr;});
+      reglages.conges=(reglages.conges||[]).filter(function(c){return c.membre!==b.dataset.suppr;});
+      enregistrer();
+    };
+  });
+  remplirSelecteurAbsence();
+}
+function remplirSelecteurAbsence(){
+  if(!$("#ap"))return;
+  var ancien=$("#ap").value;
+  $("#ap").innerHTML=membresActifs().map(function(m){return'<option value="'+esc(m.id)+'">'+esc(m.nom)+"</option>";}).join("");
+  if(ancien)$("#ap").value=ancien;
 }
 function renderCharge(){
   if(!$("#chargeRecap"))return;
@@ -849,9 +938,11 @@ function renderCharge(){
   if(reste>0&&semaines!=null){
     recap+="<p>À pleine capacité, le reste à planifier représente environ <strong>"+(Math.round(semaines*10)/10).toLocaleString("fr-FR")+" semaine"+(semaines>=2?"s":"")+"</strong> de travail de l’équipe.</p>";
   }
-  var dispo4=0,j=today();
-  for(var k=0;k<28;k++){dispo4+=capaciteJour(j);j=plusJours(j,1);}
-  recap+="<p>Disponibilité des 4 prochaines semaines : "+heuresTexte(dispo4)+" (jours fériés et absences déduits)</p>";
+  var dispo4=0,j=today(),absences4=0;
+  for(var k=0;k<28;k++){dispo4+=capaciteJour(j);absences4+=absentsLe(j);j=plusJours(j,1);}
+  recap+="<p>Disponibilité des 4 prochaines semaines : "+heuresTexte(dispo4)+" (jours fériés et absences déduits"
+    +(absences4?" — "+absences4+" jour(s)-personne d’absence":"")+")</p>";
+  if(!membres().length)recap+='<p class="sub">Aucune personne nommée : l’affectation nominative et le planning ne peuvent pas être calculés.</p>';
   recap+='<p class="sub">Jours fériés pris en compte : '+(FERIES_SOURCE?FERIES_SOURCE:"non chargés")+"</p>";
   if(!ch.length)recap='<p class="sub">Aucun chantier accepté pour l’instant. Dès qu’un devis passera en « Accepté », il apparaîtra ici.</p>';
   $("#chargeRecap").innerHTML=recap;
@@ -859,23 +950,53 @@ function renderCharge(){
   var liste=ch.slice().sort(function(a,b){return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));});
   $("#chargeListe").innerHTML=liste.length?liste.map(function(d){
     var manque=d.heures==null||d.heures==="";
-    var quand=d.debutPrevu&&d.finPrevue?"Positionné du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Pas encore positionné";
+    var eq=intervenantsDe(d);
+    var quand=d.debutPrevu&&d.finPrevue?"du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"pas encore positionné";
     return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+(manque?"wait":(d.debutPrevu?"oktag":"infotag"))+'">'+(manque?"Heures à saisir":heuresTexte(d.heures))+'</span>'
       +'<span class="sub">'+quand+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+"</div>"
+      +'<div class="sub" style="margin-top:4px">'+(eq.length?esc(eq.map(nomMembre).join(", ")):"intervenant à définir")+'</div>'
       +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
   }).join(""):'<p class="sub">Aucun chantier accepté.</p>';
   Array.prototype.forEach.call($("#chargeListe").querySelectorAll("article"),function(a){
     a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
   });
+  renderPlanning();
   renderConges();
+}
+function renderPlanning(){
+  if(!$("#planningGrille"))return;
+  var actifs=membresActifs();
+  if(!actifs.length){$("#planningGrille").innerHTML='<p class="sub">Ajoute d’abord les personnes de l’équipe.</p>';return;}
+  var jours=[],j=today();
+  while(jours.length<5&&jours.length<60){
+    if(estOuvre(j))jours.push(j);
+    j=plusJours(j,1);
+  }
+  var html='<div class="table-wrap"><table><thead><tr><th>Intervenant</th>'+jours.map(function(x){
+    return "<th>"+new Date(x+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+"</th>";
+  }).join("")+"</tr></thead><tbody>";
+  actifs.forEach(function(m){
+    html+="<tr><td><strong>"+esc(m.nom)+"</strong></td>";
+    jours.forEach(function(x){
+      if(absenteLe(m.id,x)){html+='<td><span class="tag greytag">Absent</span></td>';return;}
+      var faits=dossiers.filter(function(d){
+        return d.statut==="Accepté"&&d.debutPrevu&&d.finPrevue&&intervenantsDe(d).indexOf(m.id)>=0&&x>=d.debutPrevu&&x<=d.finPrevue;
+      });
+      html+="<td>"+(faits.length?faits.map(function(d){return '<span class="tag oktag">'+esc(d.client)+"</span>";}).join(" "):'<span class="tag">libre</span>')+"</td>";
+    });
+    html+="</tr>";
+  });
+  html+="</tbody></table></div>";
+  $("#planningGrille").innerHTML=html;
 }
 function renderConges(){
   if(!$("#congesListe"))return;
+  remplirSelecteurAbsence();
   var c=(reglages.conges||[]).slice().sort(function(a,b){return String(a.debut).localeCompare(String(b.debut));});
   $("#congesListe").innerHTML=c.length?c.map(function(x){
     return '<div class="row between" style="border-top:1px solid var(--line);padding:10px 0">'
-      +'<span>du '+frDateCourt(x.debut)+" au "+frDateCourt(x.fin)+" · "+x.absents+" personne"+(x.absents>1?"s":"")+"</span>"
+      +'<span>'+esc(nomMembre(x.membre))+" — du "+frDateCourt(x.debut)+" au "+frDateCourt(x.fin)+" ("+(x.type||"absence")+")</span>"
       +'<button type="button" data-i="'+esc(x.id||"")+'">Retirer</button></div>';
   }).join(""):'<p class="sub" style="margin-bottom:0">Aucune absence enregistrée.</p>';
   Array.prototype.forEach.call($("#congesListe").querySelectorAll("button"),function(b){
@@ -897,14 +1018,35 @@ function chercherPourDossier(d,dlg){
     return;
   }
   $("#dlgbody").innerHTML='<h2 style="margin:0 0 10px;font-size:21px">Date d’intervention — '+esc(d.client)+'</h2>'
-    +chargerCreneauHtml(prop,heures)
-    +'<div class="row" style="margin-top:16px"><button class="primary" type="button" id="dkeep">Retenir cette période</button><button type="button" id="dback">Retour au dossier</button></div>';
+    +'<label class="chk"><input id="dadeux" type="checkbox"> Intervention à deux personnes</label>'
+    +'<div id="dresultat" style="margin-top:10px"></div>'
+    +'<div class="row" style="margin-top:16px"><button class="primary" type="button" id="dkeep" class="hide">Retenir cette période</button><button type="button" id="dback">Retour au dossier</button></div>';
+  var propCourante=null;
+  function relancer(){
+    var nb=$("#dadeux").checked?2:1;
+    var p=chercherCreneau(heures,debutMin,nb);
+    propCourante=p;
+    if(!p){
+      $("#dresultat").innerHTML='<div class="msg err">Aucune période trouvée dans les deux prochaines années avec la disponibilité actuelle. Vérifie les heures, les absences ou les renforts.</div>';
+      $("#dkeep").classList.add("hide");
+      return;
+    }
+    $("#dresultat").innerHTML=chargerCreneauHtml(p,heures)
+      +'<p class="sub" style="margin-top:8px">Intervenant'+(p.membres.length>1?"s":"")+' proposé'+(p.membres.length>1?"s":"")+' : <strong>'+esc(p.membres.map(nomMembre).join(", "))+'</strong></p>';
+    $("#dkeep").classList.remove("hide");
+  }
+  $("#dadeux").onchange=relancer;
+  relancer();
   $("#dkeep").onclick=function(){
+    if(!propCourante)return;
+    var p=propCourante;
     saveDossiers(function(liste){
-      for(var i=0;i<liste.length;i++)if(liste[i].id===d.id){liste[i].debutPrevu=prop.debut;liste[i].finPrevue=prop.fin;liste[i].planning="prévisionnel";}
+      for(var i=0;i<liste.length;i++)if(liste[i].id===d.id){
+        liste[i].debutPrevu=p.debut;liste[i].finPrevue=p.fin;liste[i].intervenants=p.membres;liste[i].planning="prévisionnel";
+      }
     }).then(function(){
       dlg.close();
-      ok("Période prévisionnelle enregistrée pour "+d.client+" : du "+frDateCourt(prop.debut)+" au "+frDateCourt(prop.fin)+".",MSGS.list);
+      ok("Période prévisionnelle retenue pour "+d.client+" : du "+frDateCourt(p.debut)+" au "+frDateCourt(p.fin)+" avec "+p.membres.map(nomMembre).join(" et ")+".",MSGS.list);
     }).catch(function(e){fail(String(e.message),MSGS.list);});
   };
   $("#dback").onclick=function(){dlg.close();ouvrirDossier(d.id);};
@@ -1071,28 +1213,34 @@ if($("#dnew"))$("#dnew").onclick=nouveauDossier;
 if($("#dciv"))$("#dciv").onclick=function(){filtreCivilite=!filtreCivilite;renderDossiers();};
 if($("#fichier"))$("#fichier").onchange=function(e){if(e.target.files&&e.target.files[0])importerFichier(e.target.files[0]);};
 if($("#aadd"))$("#aadd").onclick=function(){
-  var deb=$("#adeb").value,fin=$("#afin").value,nb=Number($("#anb").value||1);
+  var deb=$("#adeb").value,fin=$("#afin").value,membre=$("#ap").value,type=$("#anb").value;
+  if(!membre){fail("Ajoute d’abord une personne dans l’équipe.");return;}
   if(!deb||!fin||fin<deb){fail("Choisis une période valide : la fin doit suivre le début.");return;}
-  reglages.conges=(reglages.conges||[]).concat([{id:"c"+Date.now(),debut:deb,fin:fin,absents:nb}]);
+  reglages.conges=(reglages.conges||[]).concat([{id:"c"+Date.now(),membre:membre,debut:deb,fin:fin,type:type}]);
   saveReglages().then(function(){
     $("#adeb").value="";$("#afin").value="";
     renderCharge();
-    ok("Absence enregistrée sur OneDrive.",MSGS.list);
+    ok("Absence de "+nomMembre(membre)+" enregistrée sur OneDrive.",MSGS.list);
   }).catch(function(e){fail(String(e.message));});
 };
+if($("#madd"))$("#madd").onclick=function(){
+  var nom=$("#mn").value.trim();
+  if(!nom){fail("Écris un prénom et un nom.");return;}
+  reglages.equipe=reglages.equipe||{};
+  reglages.equipe.membres=(reglages.equipe.membres||[]).concat([{id:"m"+Date.now(),nom:nom,renfort:false}]);
+  $("#mn").value="";
+  enregistrer(function(){ok(nom+" ajouté à l’équipe.",MSGS.list);});
+};
 if($("#csave"))$("#csave").onclick=function(){
-  var e=reglages.equipe||{};
-  e.permanents=Number($("#rp").value||5);
-  e.renforts=Number($("#rr").value||0);
-  e.heuresLunJeu=Number($("#hl").value||8);
-  e.heuresVen=Number($("#hv").value||7);
-  reglages.equipe=e;
+  reglages.equipe=reglages.equipe||{};
+  reglages.equipe.heuresLunJeu=Number($("#hl").value||8);
+  reglages.equipe.heuresVen=Number($("#hv").value||7);
   $("#csave").disabled=true;
   saveReglages().then(function(){
     $("#csave").disabled=false;
-    $("#cinfo").textContent="Équipe enregistrée dans ton OneDrive : "+heuresTexte(capaciteHebdo(reglages))+" disponibles par semaine.";
+    $("#cinfo").textContent="Équipe enregistrée : "+membresActifs().length+" personne(s) disponible(s), "+heuresTexte(capaciteHebdo(reglages))+" par semaine.";
     renderCharge();
-    ok("Équipe enregistrée sur OneDrive.",MSGS.list);
+    ok("Équipe et horaires enregistrés sur OneDrive.",MSGS.list);
   }).catch(function(err){
     $("#csave").disabled=false;
     $("#cinfo").textContent="";
