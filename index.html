@@ -884,36 +884,44 @@ function dispoJour(iso,plan){
   return membresActifs().reduce(function(s,m){return s+dispoMembre(m,iso,plan);},0);
 }
 function chercherCreneau(heures,debutMin,nbPersonnes){
+  /* Règle voulue par Régis : les journées sont remplies au maximum (8 h, 7 h le vendredi) ;
+     seule la dernière journée peut être incomplète. On ne démarre donc pas sur une journée
+     déjà entamée par un autre chantier. */
   var plan=chargesPlanifiees(),reste=Number(heures);
   if(!(reste>0))return null;
   var nb=Math.max(1,Math.min(Number(nbPersonnes)||1,membresActifs().length));
-  var jour=debutMin,debut=null,fin=null,jours=0,choisis=null;
+  var jour=debutMin,debut=null,fin=null,jours=0,choisis=null,parJour=[];
   for(var i=0;i<600;i++){
     if(!choisis){
       var candidats=membresActifs().map(function(m){return{m:m,d:dispoMembre(m,jour,plan)};})
         .filter(function(x){return x.d>0;})
         .sort(function(a,b){return b.d-a.d;});
-      if(candidats.length)choisis=candidats.slice(0,nb).map(function(x){return x.m;});
+      if(!candidats.length){jour=plusJours(jour,1);continue;}
+      var retenus=candidats.slice(0,nb);
+      var offre=retenus.reduce(function(s,x){return s+x.d;},0);
+      var pleine=heuresJour(jour)*retenus.length;
+      /* si le chantier dépasse une journée, on démarre seulement quand la journée peut être pleine */
+      if(reste>pleine+0.001&&offre+0.001<pleine){jour=plusJours(jour,1);continue;}
+      choisis=retenus.map(function(x){return x.m;});
     }
-    if(choisis){
-      var consomme=0;
-      for(var c=0;c<choisis.length&&reste>0.001;c++){
-        var libre=dispoMembre(choisis[c],jour,plan);
-        if(libre<=0)continue;
-        var pris=Math.min(libre,reste);
-        plan[choisis[c].id+"|"+jour]=(plan[choisis[c].id+"|"+jour]||0)+pris;
-        reste-=pris;consomme+=pris;
-      }
-      if(consomme>0){
-        if(!debut)debut=jour;
-        fin=jour;jours++;
-      }
+    var consomme=0,detail=[];
+    for(var c=0;c<choisis.length&&reste>0.001;c++){
+      var libre=dispoMembre(choisis[c],jour,plan);
+      if(libre<=0)continue;
+      var pris=Math.min(libre,reste);
+      plan[choisis[c].id+"|"+jour]=(plan[choisis[c].id+"|"+jour]||0)+pris;
+      reste-=pris;consomme+=pris;
+      detail.push({membre:choisis[c].id,heures:pris});
+    }
+    if(consomme>0){
+      if(!debut)debut=jour;
+      fin=jour;jours++;parJour.push({date:jour,heures:consomme});
     }
     if(reste<=0.001)break;
     jour=plusJours(jour,1);
   }
   if(reste>0.001)return null;
-  return {debut:debut,fin:fin,jours:jours,membres:choisis?choisis.map(function(m){return m.id;}):[]};
+  return {debut:debut,fin:fin,jours:jours,membres:choisis?choisis.map(function(m){return m.id;}):[],parJour:parJour};
 }
 function jourLisible(iso){
   var d=new Date(iso+"T12:00:00");
@@ -922,7 +930,18 @@ function jourLisible(iso){
 function chargerCreneauHtml(prop,heures){
   return '<p>Pour <strong>'+heuresTexte(heures)+'</strong> de main-d’œuvre, la première période compatible est :</p>'
     +'<p style="font-size:20px"><strong>du '+jourLisible(prop.debut)+' au '+jourLisible(prop.fin)+'</strong></p>'
-    +'<p class="sub">'+prop.jours+' jour'+(prop.jours>1?"s":"")+' ouvré'+(prop.jours>1?"s":"")+' · jours fériés et absences déduits · période prévisionnelle, à confirmer avec le client</p>';
+    +'<p class="sub">'+prop.jours+' jour'+(prop.jours>1?"s":"")+' ouvré'+(prop.jours>1?"s":"")
+    +(function(){
+      var pj=prop.parJour||[];
+      if(!pj.length)return "";
+      var pleines=pj.filter(function(x){return Math.abs(x.heures-heuresJour(x.date))<0.01;}).length;
+      var derniere=pj[pj.length-1];
+      var txt=" · "+pleines+" jour"+(pleines>1?"s":"")+" plein"+(pleines>1?"s":"");
+      if(Math.abs(derniere.heures-heuresJour(derniere.date))>=0.01)
+        txt+=", dernière journée à "+heuresTexte(derniere.heures);
+      return txt;
+    })()
+    +' · jours fériés et absences déduits · période prévisionnelle, à confirmer avec le client</p>';
 }
 function loadReglages(){
   return api(REGLAGESPATH+":/content").then(function(j){
