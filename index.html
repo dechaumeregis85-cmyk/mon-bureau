@@ -119,6 +119,18 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <p class="sub" id="cinfo" style="margin-bottom:0"></p>
     </div>
     <div class="card">
+      <h2 style="margin-top:0">Absences et congés</h2>
+      <div class="grid" style="margin-top:6px">
+        <div><label for="adeb">Du</label><input id="adeb" type="date"></div>
+        <div><label for="afin">Au</label><input id="afin" type="date"></div>
+      </div>
+      <div class="grid" style="margin-top:10px">
+        <div><label for="anb">Personnes absentes</label><input id="anb" type="number" min="1" max="30" value="1"></div>
+        <div style="align-self:end"><button class="primary" type="button" id="aadd">Ajouter l’absence</button></div>
+      </div>
+      <div id="congesListe" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
       <h2 style="margin-top:0">Chantiers acceptés</h2>
       <div id="chargeListe"></div>
     </div>
@@ -399,6 +411,12 @@ function ouvrirDossier(id){
     +'<p class="sub" style="margin-top:0">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+(d.email?" · "+esc(d.email):"")+'</p>'
     +'<p class="sub" style="margin:0 0 4px">Rendez-vous : '+frDateCourt(d.rdv)+'</p>'
     +champDossier(d)
+    +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
+      ? '<div class="card" style="margin:12px 0;padding:12px;background:#f7f9f5">'
+        +'<p style="margin:0 0 6px"><strong>Intervention</strong></p>'
+        +'<p class="sub" style="margin:0 0 10px">'+(d.debutPrevu&&d.finPrevue?"Période prévisionnelle : du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Aucune période proposée pour l’instant")+'</p>'
+        +'<button type="button" id="dcreneau">Chercher une date d’intervention</button></div>'
+      : "")
     +"<h3 style=\"font-size:18px\">Actions liées</h3>";
   html+=lignes.length?lignes.map(function(t){
     var etat={todo:"à faire",waiting:"en attente",done:"terminée"}[t.status]||t.status;
@@ -413,6 +431,7 @@ function ouvrirDossier(id){
     $("#"+k).onchange=function(){$("#fapercu").textContent=apercuDossier(lireChamps(d));};
   });
   $("#dlgno").onclick=function(){dlg.close();};
+  if($("#dcreneau"))$("#dcreneau").onclick=function(){chercherPourDossier(d,dlg);};
   $("#dlgbody").querySelector("button[data-new]").onclick=function(){
     dlg.close();
     showEcran("today");
@@ -475,6 +494,82 @@ function capaciteHebdo(r){
   var hJour=Number(eq.heuresLunJeu==null?8:eq.heuresLunJeu)*4+Number(eq.heuresVen==null?7:eq.heuresVen);
   return n*hJour;
 }
+var FERIES={},FERIES_SOURCE="";
+function chargerFeries(){
+  return fetch("jours-feries.json").then(function(r){return r.ok?r.json():null;}).then(function(j){
+    if(j&&j.jours){FERIES={};j.jours.forEach(function(d){FERIES[d]=true;});FERIES_SOURCE=String(j.jours[0]).slice(0,4)+"–"+String(j.jours[j.jours.length-1]).slice(0,4);}
+  }).catch(function(){FERIES_SOURCE="";});
+}
+function jourSemaine(iso){return new Date(iso+"T12:00:00").getDay();}
+function estOuvre(iso){
+  var j=jourSemaine(iso);
+  if(j===0||j===6)return false;
+  return !FERIES[iso];
+}
+function personnesEquipe(){var eq=reglages.equipe||{};return Number(eq.permanents||5)+Number(eq.renforts||0);}
+function heuresJour(iso){
+  var eq=reglages.equipe||{};
+  return jourSemaine(iso)===5?Number(eq.heuresVen==null?7:eq.heuresVen):Number(eq.heuresLunJeu==null?8:eq.heuresLunJeu);
+}
+function absentsLe(iso){
+  var n=0;
+  (reglages.conges||[]).forEach(function(c){
+    if(c.debut&&c.fin&&iso>=c.debut&&iso<=c.fin)n+=Number(c.absents||1);
+  });
+  return n;
+}
+function capaciteJour(iso){
+  if(!estOuvre(iso))return 0;
+  var p=personnesEquipe()-absentsLe(iso);
+  if(p<0)p=0;
+  return p*heuresJour(iso);
+}
+function joursOuvresEntre(deb,fin){
+  var out=[],j=deb,g=0;
+  while(j<=fin&&g<400){if(estOuvre(j))out.push(j);j=plusJours(j,1);g++;}
+  return out;
+}
+function chargesPlanifiees(){
+  var map={};
+  dossiers.forEach(function(d){
+    if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
+    var js=joursOuvresEntre(d.debutPrevu,d.finPrevue);
+    if(!js.length)return;
+    var par=Number(d.heures)/js.length;
+    js.forEach(function(j){map[j]=(map[j]||0)+par;});
+  });
+  return map;
+}
+function dispoJour(iso,plan){
+  var c=capaciteJour(iso);
+  if(c<=0)return 0;
+  var libre=c-(plan[iso]||0);
+  return libre>0?libre:0;
+}
+function chercherCreneau(heures,debutMin){
+  var plan=chargesPlanifiees(),reste=Number(heures);
+  if(!(reste>0))return null;
+  var jour=debutMin,debut=null,fin=null,jours=0;
+  for(var i=0;i<600;i++){
+    var dispo=dispoJour(jour,plan);
+    if(dispo>0){
+      if(!debut)debut=jour;
+      var pris=Math.min(dispo,reste);
+      reste-=pris;fin=jour;jours++;
+      plan[jour]=(plan[jour]||0)+pris;
+    }
+    if(reste<=0.001)break;
+    jour=plusJours(jour,1);
+  }
+  if(reste>0.001)return null;
+  return {debut:debut,fin:fin,jours:jours};
+}
+function jourLisible(iso){return frDate(iso);}
+function chargerCreneauHtml(prop,heures){
+  return '<p>Pour <strong>'+heuresTexte(heures)+'</strong> de main-d’œuvre, la première période compatible est :</p>'
+    +'<p style="font-size:20px"><strong>du '+jourLisible(prop.debut)+' au '+jourLisible(prop.fin)+'</strong></p>'
+    +'<p class="sub">'+prop.jours+' jour'+(prop.jours>1?"s":"")+' ouvré'+(prop.jours>1?"s":"")+' · jours fériés et absences déduits · période prévisionnelle, à confirmer avec le client</p>';
+}
 function loadReglages(){
   return api(REGLAGESPATH+":/content").then(function(j){
     if(j&&j.equipe){reglages=j;}
@@ -495,33 +590,83 @@ function remplirEquipe(){
 function renderCharge(){
   if(!$("#chargeRecap"))return;
   var ch=chargeAcceptee();
-  var connues=ch.filter(function(d){return d.heures!=null&&d.heures!=="";});
-  var sansHeures=ch.length-connues.length;
-  var total=connues.reduce(function(s,d){return s+Number(d.heures||0);},0);
+  var avecHeures=ch.filter(function(d){return d.heures!=null&&d.heures!=="";});
+  var sansHeures=ch.length-avecHeures.length;
+  var aPlanifier=avecHeures.filter(function(d){return !d.debutPrevu;});
+  var planifies=avecHeures.filter(function(d){return d.debutPrevu&&d.finPrevue;});
+  var total=avecHeures.reduce(function(s,d){return s+Number(d.heures||0);},0);
+  var reste=aPlanifier.reduce(function(s,d){return s+Number(d.heures||0);},0);
   var hebdo=capaciteHebdo(reglages);
   var eq=reglages.equipe||{};
-  var personnes=Number(eq.permanents||5)+Number(eq.renforts||0);
-  var semaines=hebdo>0?total/hebdo:null;
-  var recap='<p><strong>'+heuresTexte(total)+'</strong> de main-d’œuvre engagée sur '+ch.length+' chantier'+(ch.length>1?"s":"")+" accepté"+(ch.length>1?"s":"")+"</p>";
+  var personnes=personnesEquipe();
+  var semaines=hebdo>0?reste/hebdo:null;
+  var recap="";
+  recap+="<p><strong>"+heuresTexte(total)+"</strong> de main-d’œuvre engagée sur "+ch.length+" chantier"+(ch.length>1?"s":"")+" accepté"+(ch.length>1?"s":"")+"</p>";
+  recap+="<p>Dont <strong>"+heuresTexte(reste)+"</strong> encore à planifier sur "+aPlanifier.length+" chantier"+(aPlanifier.length>1?"s":"")+" et "+heuresTexte(total-reste)+" déjà positionnés sur "+planifies.length+".</p>";
   if(sansHeures)recap+='<p class="sub">'+sansHeures+" chantier"+(sansHeures>1?"s":"")+" sans heures saisies : la charge réelle est donc au moins égale à ce total.</p>";
   recap+="<p>Capacité de l’équipe : "+heuresTexte(hebdo)+" par semaine ("+personnes+" personne"+(personnes>1?"s":"")+", lundi à jeudi "+(eq.heuresLunJeu==null?8:eq.heuresLunJeu)+" h, vendredi "+(eq.heuresVen==null?7:eq.heuresVen)+" h)</p>";
-  if(total>0&&semaines!=null){
-    recap+="<p>À pleine capacité, ces heures représentent environ <strong>"+(Math.round(semaines*10)/10).toLocaleString("fr-FR")+" semaine"+(semaines>=2?"s":"")+"</strong> de travail de l’équipe, hors absences et sans tenir compte de l’ordre de priorité.</p>";
+  if(reste>0&&semaines!=null){
+    recap+="<p>À pleine capacité, le reste à planifier représente environ <strong>"+(Math.round(semaines*10)/10).toLocaleString("fr-FR")+" semaine"+(semaines>=2?"s":"")+"</strong> de travail de l’équipe.</p>";
   }
+  var dispo4=0,j=today();
+  for(var k=0;k<28;k++){dispo4+=capaciteJour(j);j=plusJours(j,1);}
+  recap+="<p>Disponibilité des 4 prochaines semaines : "+heuresTexte(dispo4)+" (jours fériés et absences déduits)</p>";
+  recap+='<p class="sub">Jours fériés pris en compte : '+(FERIES_SOURCE?FERIES_SOURCE:"non chargés")+"</p>";
   if(!ch.length)recap='<p class="sub">Aucun chantier accepté pour l’instant. Dès qu’un devis passera en « Accepté », il apparaîtra ici.</p>';
   $("#chargeRecap").innerHTML=recap;
 
   var liste=ch.slice().sort(function(a,b){return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"));});
   $("#chargeListe").innerHTML=liste.length?liste.map(function(d){
     var manque=d.heures==null||d.heures==="";
-    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+(manque?"wait":"oktag")+'">'+(manque?"Heures à saisir":heuresTexte(d.heures))+'</span>'
-      +'<span class="sub">Rendez-vous : '+frDateCourt(d.rdv)+'</span></div>'
+    var quand=d.debutPrevu&&d.finPrevue?"Positionné du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"Pas encore positionné";
+    return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+(manque?"wait":(d.debutPrevu?"oktag":"infotag"))+'">'+(manque?"Heures à saisir":heuresTexte(d.heures))+'</span>'
+      +'<span class="sub">'+quand+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+"</div>"
-      +'<div class="row" style="margin-top:10px"><button type="button">Saisir les heures</button></div></article>';
+      +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
   }).join(""):'<p class="sub">Aucun chantier accepté.</p>';
   Array.prototype.forEach.call($("#chargeListe").querySelectorAll("article"),function(a){
     a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
   });
+  renderConges();
+}
+function renderConges(){
+  if(!$("#congesListe"))return;
+  var c=(reglages.conges||[]).slice().sort(function(a,b){return String(a.debut).localeCompare(String(b.debut));});
+  $("#congesListe").innerHTML=c.length?c.map(function(x){
+    return '<div class="row between" style="border-top:1px solid var(--line);padding:10px 0">'
+      +'<span>du '+frDateCourt(x.debut)+" au "+frDateCourt(x.fin)+" · "+x.absents+" personne"+(x.absents>1?"s":"")+"</span>"
+      +'<button type="button" data-i="'+esc(x.id||"")+'">Retirer</button></div>';
+  }).join(""):'<p class="sub" style="margin-bottom:0">Aucune absence enregistrée.</p>';
+  Array.prototype.forEach.call($("#congesListe").querySelectorAll("button"),function(b){
+    b.onclick=function(){
+      reglages.conges=(reglages.conges||[]).filter(function(x){return String(x.id)!==b.dataset.i;});
+      saveReglages().then(function(){renderCharge();}).catch(function(e){fail(String(e.message));});
+    };
+  });
+}
+function chercherPourDossier(d,dlg){
+  var heures=Number(d.heures||0);
+  if(!(heures>0)){fail("Renseigne d’abord les heures prévues.",MSGS.list);return;}
+  var debutMin=today();
+  if(d.rdv&&d.rdv>debutMin)debutMin=d.rdv;
+  var prop=chercherCreneau(heures,debutMin);
+  if(!prop){
+    dlg.close();
+    fail("Aucune période trouvée dans les deux prochaines années avec la capacité actuelle. Vérifie les heures, les absences ou les renforts.",MSGS.list);
+    return;
+  }
+  $("#dlgbody").innerHTML='<h2 style="margin:0 0 10px;font-size:21px">Date d’intervention — '+esc(d.client)+'</h2>'
+    +chargerCreneauHtml(prop,heures)
+    +'<div class="row" style="margin-top:16px"><button class="primary" type="button" id="dkeep">Retenir cette période</button><button type="button" id="dback">Retour au dossier</button></div>';
+  $("#dkeep").onclick=function(){
+    saveDossiers(function(liste){
+      for(var i=0;i<liste.length;i++)if(liste[i].id===d.id){liste[i].debutPrevu=prop.debut;liste[i].finPrevue=prop.fin;liste[i].planning="prévisionnel";}
+    }).then(function(){
+      dlg.close();
+      ok("Période prévisionnelle enregistrée pour "+d.client+" : du "+frDateCourt(prop.debut)+" au "+frDateCourt(prop.fin)+".",MSGS.list);
+    }).catch(function(e){fail(String(e.message),MSGS.list);});
+  };
+  $("#dback").onclick=function(){dlg.close();ouvrirDossier(d.id);};
 }
 function showEcran(nom){
   ecran=nom;
@@ -539,6 +684,16 @@ function showEcran(nom){
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
 if($("#q"))$("#q").oninput=function(){renderDossiers();};
 if($("#dnew"))$("#dnew").onclick=nouveauDossier;
+if($("#aadd"))$("#aadd").onclick=function(){
+  var deb=$("#adeb").value,fin=$("#afin").value,nb=Number($("#anb").value||1);
+  if(!deb||!fin||fin<deb){fail("Choisis une période valide : la fin doit suivre le début.");return;}
+  reglages.conges=(reglages.conges||[]).concat([{id:"c"+Date.now(),debut:deb,fin:fin,absents:nb}]);
+  saveReglages().then(function(){
+    $("#adeb").value="";$("#afin").value="";
+    renderCharge();
+    ok("Absence enregistrée sur OneDrive.",MSGS.list);
+  }).catch(function(e){fail(String(e.message));});
+};
 if($("#csave"))$("#csave").onclick=function(){
   var e=reglages.equipe||{};
   e.permanents=Number($("#rp").value||5);
@@ -592,7 +747,7 @@ function start(){
   }
   chain.then(function(){
     var cached=null;try{cached=JSON.parse(localStorage.getItem(LS_DATA)||"null");}catch(e){}
-    return refresh().then(function(has){
+    return chargerFeries().then(function(){return refresh();}).then(function(has){
       if(!token&&!has)return;
       showLoggedIn();
       $("#sync").textContent="Connecté. Lecture de tes tâches sur OneDrive…";
