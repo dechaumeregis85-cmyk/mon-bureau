@@ -499,8 +499,7 @@ function texteRelance(d){
   var corps=intro+"\n\nJe reviens vers vous au sujet de votre devis "+travaux
     +(d.commune?" pour "+d.commune:"")
     +(d.envoi?" transmis le "+frDateCourt(d.envoi):"")+".\n\n"
-    +"Avez-vous pu en prendre connaissance ? Je reste disponible pour l’ajuster ou répondre à vos questions.\n\n"
-    +"Bien cordialement,";
+    +"Avez-vous pu en prendre connaissance ? Je reste disponible pour l’ajuster ou répondre à vos questions.";
   return {objet:objet,corps:corps};
 }
 function lienRelance(d){
