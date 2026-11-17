@@ -862,10 +862,11 @@ function joursOuvresEntre(deb,fin){
 function intervenantsDe(d){
   return (d.intervenants||[]).filter(function(id){return !!id;});
 }
-function chargesPlanifiees(){
+function chargesPlanifiees(exclureId){
   var map={};
   dossiers.forEach(function(d){
     if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
+    if(exclureId&&d.id===exclureId)return;   /* ne pas se bloquer soi-même */
     var eq=intervenantsDe(d);
     if(!eq.length)return;
     var js=joursOuvresEntre(d.debutPrevu,d.finPrevue);
@@ -883,11 +884,11 @@ function dispoMembre(m,iso,plan){
 function dispoJour(iso,plan){
   return membresActifs().reduce(function(s,m){return s+dispoMembre(m,iso,plan);},0);
 }
-function chercherCreneau(heures,debutMin,nbPersonnes){
+function chercherCreneau(heures,debutMin,nbPersonnes,exclureId){
   /* Règle voulue par Régis : les journées sont remplies au maximum (8 h, 7 h le vendredi) ;
      seule la dernière journée peut être incomplète. On ne démarre donc pas sur une journée
      déjà entamée par un autre chantier. */
-  var plan=chargesPlanifiees(),reste=Number(heures);
+  var plan=chargesPlanifiees(exclureId),reste=Number(heures);
   if(!(reste>0))return null;
   var nb=Math.max(1,Math.min(Number(nbPersonnes)||1,membresActifs().length));
   var jour=debutMin,debut=null,fin=null,jours=0,choisis=null,parJour=[];
@@ -1134,7 +1135,7 @@ function chercherPourDossier(d,dlg){
   var propCourante=null;
   function relancer(){
     var nb=$("#dadeux").checked?2:1;
-    var p=chercherCreneau(heures,debutMin,nb);
+    var p=chercherCreneau(heures,debutMin,nb,d.id);
     propCourante=p;
     if(!p){
       $("#dresultat").innerHTML='<div class="msg err">Aucune période trouvée dans les deux prochaines années avec la disponibilité actuelle. Vérifie les heures, les absences ou les renforts.</div>';
