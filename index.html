@@ -492,12 +492,22 @@ function lireChamps(base){
   d.relanceFaite=$("#fr").checked?"Oui":"";
   return d;
 }
+function libelleTravaux(v){
+  var mots={"CLIM":"Climatisation","PAC":"Pompe à chaleur","SDB":"Salle de bains","RENO":"Rénovation","POELE":"Poêle","GAINABLE":"Gainable","ELEC":"Électricité","INSERT":"Insert","VMC":"VMC","DIVERS":"Divers"};
+  var texte=String(v==null?"":v).trim();
+  if(!texte)return "votre projet";
+  return texte.split(/\s*\+\s*/).map(function(morceau){
+    var cle=morceau.trim().toUpperCase();
+    if(!mots[cle]&&cle.indexOf("PAC")===0&&cle.length>3)mots[cle]="Pompe à chaleur "+morceau.trim().slice(3).trim();
+    return mots[cle]||morceau.trim();
+  }).join(" + ");
+}
 function texteRelance(d){
-  var travaux=d.travaux?String(d.travaux):"votre projet";
+  var travaux=libelleTravaux(d.travaux);
+  var bas="votre devis "+travaux;
   var objet="Votre devis "+travaux;
-  var intro="Bonjour"+(d.client?" "+d.client:"")+",";
-  var corps=intro+"\n\nJe reviens vers vous au sujet de votre devis "+travaux
-    +(d.commune?" pour "+d.commune:"")
+  var corps="Bonjour"+(d.client?" "+d.client:"")+",\n\n"
+    +"Je reviens vers vous au sujet de "+bas
     +(d.envoi?" transmis le "+frDateCourt(d.envoi):"")+".\n\n"
     +"Avez-vous pu en prendre connaissance ? Je reste disponible pour l’ajuster ou répondre à vos questions.";
   return {objet:objet,corps:corps};
