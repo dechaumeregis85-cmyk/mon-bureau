@@ -862,17 +862,41 @@ function joursOuvresEntre(deb,fin){
 function intervenantsDe(d){
   return (d.intervenants||[]).filter(function(id){return !!id;});
 }
+function partsPersonne(d){
+  /* Répartition par personne : journées pleines (8 h, 7 h le vendredi),
+     seule la dernière journée peut être incomplète. */
+  var eq=intervenantsDe(d);
+  var total=Number(d.heures);
+  if(!eq.length||!d.debutPrevu||!(total>0))return [];
+  var reste=total/eq.length,jour=d.debutPrevu,out=[],g=0;
+  while(reste>0.001&&g<400){
+    if(estOuvre(jour)){
+      var pris=Math.min(heuresJour(jour),reste);
+      out.push({date:jour,heures:pris});
+      reste-=pris;
+    }
+    jour=plusJours(jour,1);g++;
+  }
+  return out;
+}
+function repartitionChantier(d){
+  var eq=intervenantsDe(d);
+  return partsPersonne(d).map(function(x){return{date:x.date,heures:x.heures*eq.length,membres:eq};});
+}
+function finreelle(d){
+  var p=partsPersonne(d);
+  return p.length?p[p.length-1].date:d.finPrevue||null;
+}
 function chargesPlanifiees(exclureId){
   var map={};
   dossiers.forEach(function(d){
-    if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
+    if(d.statut!=="Accepté"||!d.debutPrevu||d.heures==null)return;
     if(exclureId&&d.id===exclureId)return;   /* ne pas se bloquer soi-même */
     var eq=intervenantsDe(d);
     if(!eq.length)return;
-    var js=joursOuvresEntre(d.debutPrevu,d.finPrevue);
-    if(!js.length)return;
-    var par=Number(d.heures)/(js.length*eq.length);
-    js.forEach(function(j){eq.forEach(function(id){map[id+"|"+j]=(map[id+"|"+j]||0)+par;});});
+    partsPersonne(d).forEach(function(x){
+      eq.forEach(function(id){map[id+"|"+x.date]=(map[id+"|"+x.date]||0)+x.heures;});
+    });
   });
   return map;
 }
@@ -1042,7 +1066,7 @@ function renderCharge(){
   $("#chargeListe").innerHTML=liste.length?liste.map(function(d){
     var manque=d.heures==null||d.heures==="";
     var eq=intervenantsDe(d);
-    var quand=d.debutPrevu&&d.finPrevue?"du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(d.finPrevue):"pas encore positionné";
+    var quand=d.debutPrevu?"du "+frDateCourt(d.debutPrevu)+" au "+frDateCourt(finreelle(d)):"pas encore positionné";
     return '<article class="doss" data-id="'+d.id+'"><div class="row between"><span class="tag '+(manque?"wait":(d.debutPrevu?"oktag":"infotag"))+'">'+(manque?"Heures à saisir":heuresTexte(d.heures))+'</span>'
       +'<span class="sub">'+quand+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+"</div>"
@@ -1071,7 +1095,19 @@ function renderPlanning(){
     if(estOuvre(j))jours.push(j);
     j=plusJours(j,1);
   }
-  var html='<p class="sub">4 semaines à partir du lundi '+frDateCourt(jours[0])+'. Fais défiler pour voir toute la période.</p>';
+  var plan=chargesPlanifiees();
+  var affectations={};
+  dossiers.forEach(function(d){
+    if(d.statut!=="Accepté"||!d.debutPrevu||d.heures==null)return;
+    var eq=intervenantsDe(d);
+    if(!eq.length)return;
+    partsPersonne(d).forEach(function(x){
+      eq.forEach(function(id){
+        affectations[id+"|"+x.date]=(affectations[id+"|"+x.date]||[]).concat([{client:d.client,heures:x.heures}]);
+      });
+    });
+  });
+  var html='<p class="sub">4 semaines à partir du lundi '+frDateCourt(jours[0])+'. Journées pleines à 8 h, 7 h le vendredi. Fais défiler pour voir toute la période.</p>';
   html+='<div class="table-wrap"><table><thead><tr><th>Intervenant</th>'+jours.map(function(x){
     var d=new Date(x+"T12:00:00");
     var fete=FERIES[x];
@@ -1082,19 +1118,11 @@ function renderPlanning(){
     html+="<tr><td><strong>"+esc(m.nom)+"</strong></td>";
     jours.forEach(function(x){
       if(absenteLe(m.id,x)){html+='<td><span class="tag greytag">Absent</span></td>';return;}
-      var faits=dossiers.filter(function(d){
-        return d.statut==="Accepté"&&d.debutPrevu&&d.finPrevue&&intervenantsDe(d).indexOf(m.id)>=0&&x>=d.debutPrevu&&x<=d.finPrevue;
-      });
-      var charge=0;
-      dossiers.forEach(function(d){
-        if(d.statut!=="Accepté"||!d.debutPrevu||!d.finPrevue||d.heures==null)return;
-        if(intervenantsDe(d).indexOf(m.id)<0)return;
-        if(x<d.debutPrevu||x>d.finPrevue)return;
-        var nbJ=joursOuvresEntre(d.debutPrevu,d.finPrevue).length||1;
-        charge+=Number(d.heures)/(nbJ*intervenantsDe(d).length);
-      });
-      html+="<td>"+(faits.length?faits.map(function(d){return '<span class="tag oktag">'+esc(d.client)+"</span>";}).join(" "):'<span class="tag">libre</span>')
-        +'<br><span class="sub">'+(charge>0?heuresTexte(charge)+" / "+heuresTexte(heuresJour(x)):"—")+"</span></td>";
+      var faits=affectations[m.id+"|"+x]||[];
+      var heures=plan[m.id+"|"+x]||0;
+      var dispo=heuresJour(x);
+      html+="<td>"+(faits.length?faits.map(function(f){return '<span class="tag oktag">'+esc(f.client)+"</span>";}).join(" "):'<span class="tag">libre</span>')
+        +'<br><span class="sub">'+(heures>0?heuresTexte(heures)+" / "+heuresTexte(dispo):"—")+"</span></td>";
     });
     html+="</tr>";
   });
