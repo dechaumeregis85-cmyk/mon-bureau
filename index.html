@@ -81,6 +81,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <button type="button" data-s="charge">Charge et planning</button>
     <button type="button" data-s="heures">Heures des chantiers</button>
     <button type="button" data-s="rentabilite">Rentabilité</button>
+    <button type="button" data-s="archives">Archives</button>
   </nav>
 
   <section id="intro" class="card">
@@ -117,6 +118,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <div class="row" style="margin-top:10px"><button class="primary" type="button" id="dnew">Créer un dossier</button><button type="button" id="dciv" aria-pressed="false"></button></div>
     </div>
     <div class="card" id="dlist"></div>
+    <div id="dossMsg" class="msg hide" role="alert"></div>
     <p class="state">Ces dossiers sont enregistrés dans ton OneDrive. Ton fichier Excel n’a pas été modifié et n’a plus besoin d’être tenu à jour.</p>
   </section>
 
@@ -187,6 +189,15 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <div id="rentabListe"></div>
     </div>
   </section>
+
+  <section id="archives" class="hide">
+    <div class="card">
+      <h2 style="margin-top:0">Archives</h2>
+      <div id="archEtat"><p class="sub">Aucun dossier archivé pour l’instant.</p></div>
+      <div id="archMsg" class="msg hide" role="alert"></div>
+      <div id="archListe"></div>
+    </div>
+  </section>
 </main>
 <footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
 
@@ -210,7 +221,7 @@ var data={version:1,tasks:[]},dossiers=[],ecran="today",filter="todo",token=null
 var reglages={equipe:{permanents:5,renforts:0,heuresLunJeu:8,heuresVen:7},conges:[]};
 var totalHeures={},importInfo=null;
 
-var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg","heures":"#heuresMsg","rentab":"#rentabMsg"};
+var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg","heures":"#heuresMsg","rentab":"#rentabMsg","doss":"#dossMsg","arch":"#archMsg"};
 function showMsg(kind,txt,target){
   var e=$(target||MSGS.top);
   e.textContent=txt;
@@ -219,7 +230,7 @@ function showMsg(kind,txt,target){
 }
 function fail(m,target){showMsg("err",m,target);}
 function clearMsgs(){
-  ["#err","#formmsg","#listmsg","#heuresMsg","#rentabMsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
+  ["#err","#formmsg","#listmsg","#heuresMsg","#rentabMsg","#dossMsg","#archMsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
 }
 function ok(m,target){showMsg("ok",m,target);}
 function b64url(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
@@ -444,6 +455,7 @@ function etatAffiche(d){
   return{code:e.code,classe:e.classe,echeance:echeanceDe(d)};
 }
 function aTraiter(d){
+  if(estArchive(d))return false;
   if(alerteCommande(d))return true;
   var c=etatDossier(d).code;
   return c.charAt(0)!=="À"&&c!=="En attente"&&c!=="Relance effectuée"&&c!=="Clôturé";
@@ -458,18 +470,36 @@ function saveDossiers(modifier){
     var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
     modifier(paquet.dossiers);
     return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
-      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();renderRentabilite();});
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();renderRentabilite();renderArchives();});
   });
+}
+function archiverDossier(id,oui){
+  /* oui = true pour archiver, false pour ressortir des archives. */
+  var cible=dossiers.filter(function(x){return x.id===id;})[0];
+  if(!cible)return Promise.resolve();
+  var cibleMsg=ecran==="archives"?MSGS.arch:MSGS.doss;
+  if(estArchive(cible)===!!oui)return Promise.resolve();
+  return saveDossiers(function(liste){
+    liste.forEach(function(x){
+      if(x.id!==id)return;
+      if(oui){x.archive=true;x.archiveLe=today();}
+      else{x.archive=false;x.archiveLe=null;}
+    });
+  }).then(function(){
+    ok(oui?"Dossier "+cible.client+" archivé : il n’apparaît plus que dans « Archives »."
+         :"Dossier "+cible.client+" ressorti des archives.",cibleMsg);
+  }).catch(function(e){fail(String(e.message),cibleMsg);});
 }
 var filtreCivilite=false;
 function renderDossiers(){
   if(!dossiers.length){$("#dlist").innerHTML='<p class="sub">Aucun dossier chargé pour l’instant.</p>';$("#dcount").textContent="";if($("#dciv"))$("#dciv").textContent="";return;}
   var q=norm(($("#q")&&$("#q").value||"").trim());
-  var sansCiv=dossiers.filter(function(d){return !d.civilite&&!estSociete(d.client);}).length;
+  var sansCiv=dossiers.filter(function(d){return !estArchive(d)&&!d.civilite&&!estSociete(d.client);}).length;
 
   var bouton=$("#dciv");
   if(bouton){bouton.textContent="Civilité à compléter ("+sansCiv+")";bouton.setAttribute("aria-pressed",filtreCivilite?"true":"false");bouton.className=filtreCivilite?"primary":"";bouton.disabled=sansCiv===0&&!filtreCivilite;}
   var liste=dossiers.filter(function(d){
+    if(estArchive(d))return false;             /* les dossiers archivés sortent de la liste */
     if(filtreCivilite&&(d.civilite||estSociete(d.client)))return false;
     if(!q)return true;
     return norm(d.client+" "+(d.commune||"")+" "+(d.travaux||"")).indexOf(q)>=0;
@@ -480,8 +510,9 @@ function renderDossiers(){
     if(aTraiter(a)!==aTraiter(b))return aTraiter(a)?-1:1;
     return String(echeanceDe(a)||"9999").localeCompare(String(echeanceDe(b)||"9999"))||String(a.client).localeCompare(String(b.client));
   });
+  var archives=dossiers.filter(estArchive).length;
   $("#dcount").textContent=liste.length+" dossier"+(liste.length>1?"s":"")+(q?" trouvé"+(liste.length>1?"s":""):" au total")
-    +" — "+dossiers.filter(aTraiter).length+" à traiter";
+    +" — "+dossiers.filter(aTraiter).length+" à traiter"+(archives?" · "+archives+" archivé"+(archives>1?"s":""):"");
   $("#dlist").innerHTML=liste.length?liste.map(function(d){
     var etat=etatDossier(d),ech=echeanceDe(d);
     var nb=data.tasks.filter(function(t){return t.status!=="done"&&norm(t.client)===norm(d.client);}).length;
@@ -490,10 +521,12 @@ function renderDossiers(){
       +'<span class="sub">'+(ech?(ech<today()&&ouvertes(d)?"Échéance dépassée : ":"Échéance : ")+frDateCourt(ech):"Échéance à renseigner")+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
       +'<div class="sub" style="margin-top:6px">Devis '+esc(String(d.statut||"?").toLowerCase())+(d.envoi?" · envoyé le "+frDateCourt(d.envoi):"")+(m?" · "+m:"")+(nb?" · <strong>"+nb+" action"+(nb>1?"s":"")+'</strong> à suivre':"")+'</div>'
-      +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button></div></article>';
+      +'<div class="row" style="margin-top:10px"><button type="button">Ouvrir le dossier</button><button type="button" data-archiver="'+esc(d.id)+'">Archiver</button></div></article>';
   }).join(""):'<p class="sub">Aucun dossier ne correspond à cette recherche.</p>';
   Array.prototype.forEach.call($("#dlist").querySelectorAll("article"),function(a){
-    a.querySelector("button").onclick=function(){ouvrirDossier(a.dataset.id);};
+    var boutons=a.querySelectorAll("button");
+    boutons[0].onclick=function(){ouvrirDossier(a.dataset.id);};
+    if(boutons[1])boutons[1].onclick=function(){archiverDossier(a.dataset.id,true);};
   });
 }
 function champDossier(d){
@@ -545,6 +578,7 @@ function lireChamps(base){
   d.heures=$("#fh").value===""?null:Number($("#fh").value);
   if($("#ftp"))d.tempsPasse=$("#ftp").value===""?null:Number($("#ftp").value);
   if($("#fcmt"))d.commentaire=$("#fcmt").value.trim();
+  if($("#frp"))d.realisePar=$("#frp").value.trim();
   d.relanceFaite=$("#fr").checked?"Oui":"";
   var c=$("#fcom"),cp=$("#fcomprev"),cd=$("#fcomdelai"),cr=$("#fcomrecue");
   if(c&&cp&&cd&&cr){
@@ -616,6 +650,12 @@ function boutonRelance(d){
   if(!d.email)return '<span class="sub">E-mail client manquant</span>';
   return '<button type="button" data-relance="'+esc(d.id)+'">Préparer la relance</button>';
 }
+function infoRealise(d){
+  var fait=realiseParDe(d);
+  if(d.realisePar&&String(d.realisePar).trim())return "Saisi à la main : l’application utilise ce nom partout.";
+  if(fait)return "Repris du planning : "+fait.nom+". Écris un nom ici pour le corriger ou le remplacer.";
+  return "Aucun intervenant dans le planning : écris le nom à la main, ou coche les intervenants ci-dessus.";
+}
 function ouvrirDossier(id){
   var d=dossiers.filter(function(x){return x.id===id;})[0];
   if(!d)return;
@@ -637,6 +677,11 @@ function ouvrirDossier(id){
       +(d.statut==="Accepté"&&d.heures!=null&&d.heures!==""
         ? '<div class="row" style="margin-top:12px"><button type="button" id="dcreneau">Chercher une date d’intervention</button></div>'
         : '<p class="sub" style="margin:10px 0 0">Les dates se proposent une fois le devis accepté et les heures saisies.</p>')
+      +'<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">'
+      +'<label for="frp">Réalisé par</label>'
+      +'<input id="frp" type="text" maxlength="120" placeholder="nom de la personne" value="'+esc(d.realisePar||"")+'">'
+      +'<div class="row" style="margin-top:8px"><button type="button" id="frpplan">Reprendre du planning</button></div>'
+      +'<p class="sub" id="frpinfo" style="margin:8px 0 0">'+infoRealise(d)+'</p></div>'
       +'</div>'
     +(function(){
       var ac=alerteCommande(d);
@@ -649,7 +694,7 @@ function ouvrirDossier(id){
     var etat={todo:"à faire",waiting:"en attente",done:"terminée"}[t.status]||t.status;
     return '<p><strong>'+esc(t.text)+'</strong><br><span class="sub">'+etat+" · "+frDate(t.date)+"</span></p>";
   }).join(""):'<p class="sub">Aucune action enregistrée pour ce dossier.</p>';
-  html+='<div class="row" style="margin-top:14px"><button class="primary" type="button" id="dsave">Enregistrer</button><button type="button" data-new="1">Ajouter une action</button><button type="button" id="dlgno">Fermer</button></div>'
+  html+='<div class="row" style="margin-top:14px"><button class="primary" type="button" id="dsave">Enregistrer</button><button type="button" data-new="1">Ajouter une action</button><button type="button" id="darch">'+(estArchive(d)?"Sortir des archives":"Archiver")+'</button><button type="button" id="dlgno">Fermer</button></div>'
     +'<div id="dmsg" class="msg hide" role="alert"></div>';
   $("#dlgbody").innerHTML=html;
   var dlg=$("#dlg");dlg.showModal();
@@ -690,11 +735,28 @@ function ouvrirDossier(id){
       for(var i=0;i<liste.length;i++)if(liste[i].id===id)liste[i]=Object.assign(liste[i],modifie);
     }).then(function(){
       dlg.close();
-      ok("Dossier "+modifie.client+" enregistré sur OneDrive.",MSGS.list);
+      ok("Dossier "+modifie.client+" enregistré sur OneDrive.",MSGS.doss);
     }).catch(function(e){
       $("#dsave").disabled=false;
       msg.className="msg err";msg.textContent=String(e.message);
     });
+  };
+  $("#darch").onclick=function(){
+    var oui=!estArchive(d);
+    var modifie=lireChamps(d);          /* ne pas perdre une saisie en cours */
+    saveDossiers(function(liste){
+      for(var i=0;i<liste.length;i++)if(liste[i].id===id)liste[i]=Object.assign(liste[i],modifie);
+    }).then(function(){
+      dlg.close();
+      return archiverDossier(id,oui);
+    }).catch(function(e){fail(String(e.message),MSGS.doss);});
+  };
+  var btnPlan=$("#frpplan");
+  if(btnPlan)btnPlan.onclick=function(){
+    var eq=intervenantsDe(d);
+    if(!eq.length){$("#frpinfo").textContent="Aucun intervenant coché dans le planning pour ce chantier.";return;}
+    $("#frp").value=eq.map(nomMembre).join(", ");
+    $("#frpinfo").textContent="Noms repris du planning. Corrige si besoin, puis enregistre.";
   };
 }
 // Suggestions calculées à chaque ouverture depuis les dossiers en mémoire.
@@ -813,8 +875,19 @@ function heuresTexte(h){
   var n=Number(h);
   return (Math.round(n*10)/10).toLocaleString("fr-FR")+" h";
 }
+function estArchive(d){
+  return !!(d&&d.archive);
+}
+function realiseParDe(d){
+  /* Nom saisi à la main s’il existe, sinon reprise du planning (intervenants choisis). */
+  var manuel=String((d&&d.realisePar)||"").trim();
+  if(manuel)return{nom:manuel,source:"manuel"};
+  var eq=intervenantsDe(d);
+  if(eq.length)return{nom:eq.map(nomMembre).join(", "),source:"planning"};
+  return null;
+}
 function chargeAcceptee(){
-  return dossiers.filter(function(d){return d.statut==="Accepté";});
+  return dossiers.filter(function(d){return d.statut==="Accepté"&&!estArchive(d);});
 }
 function capaciteHebdo(r){
   var eq=r.equipe||{},n=membresActifs().length;
@@ -897,6 +970,7 @@ function chargesPlanifiees(exclureId){
   var map={};
   dossiers.forEach(function(d){
     if(d.statut!=="Accepté"||!d.debutPrevu||d.heures==null)return;
+    if(estArchive(d))return;                 /* un chantier archivé ne consomme plus de capacité */
     if(exclureId&&d.id===exclureId)return;   /* ne pas se bloquer soi-même */
     var eq=intervenantsDe(d);
     if(!eq.length)return;
@@ -1105,6 +1179,7 @@ function renderPlanning(){
   var affectations={};
   dossiers.forEach(function(d){
     if(d.statut!=="Accepté"||!d.debutPrevu||d.heures==null)return;
+    if(estArchive(d))return;
     var eq=intervenantsDe(d);
     if(!eq.length)return;
     partsPersonne(d).forEach(function(x){
@@ -1399,10 +1474,15 @@ function renderRentabilite(){
     var d=x.d;
     return '<article class="doss" data-id="'+esc(d.id)+'"><div class="row between">'
       +'<span class="tag '+(x.diff>0.001?"oktag":(x.diff<-0.001?"urgent":"greytag"))+'">'+libelle(x.diff)+'</span>'
-      +'<span class="sub">Devis '+esc(d.statut||"?")+'</span></div>'
+      +'<span class="sub">Devis '+esc(d.statut||"?")+(estArchive(d)?" · <strong>archivé</strong>":"")+'</span></div>'
       +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
       +'<p style="margin:10px 0 0;font-size:24px;font-weight:700;color:'+couleur(x.diff)+'">'+signe(x.diff)+'</p>'
       +'<div class="sub" style="margin-top:2px">Prévu : <strong>'+heuresTexte(x.prev)+'</strong> · Passé : <strong>'+heuresTexte(x.passe)+'</strong></div>'
+      +'<div class="sub" style="margin-top:2px">Réalisé par : '+(function(){
+          var fait=realiseParDe(d);
+          if(!fait)return "à renseigner";
+          return esc(fait.nom)+(fait.source==="planning"?' <span class="sub">(d’après le planning)</span>':"");
+        })()+'</div>'
       +'<div style="margin-top:10px"><label for="cm'+esc(d.id)+'">Commentaire</label>'
       +'<input class="cm" id="cm'+esc(d.id)+'" data-id="'+esc(d.id)+'" type="text" maxlength="200" placeholder="à remplir" value="'+esc(d.commentaire||"")+'"></div>'
       +'<div class="row" style="margin-top:10px"><button type="button" data-ouvre="'+esc(d.id)+'">Ouvrir le dossier</button></div></article>';
@@ -1423,6 +1503,52 @@ function renderRentabilite(){
     };
   });
 }
+function renderArchives(){
+  if(!$("#archListe"))return;
+  var liste=dossiers.filter(estArchive).slice().sort(function(a,b){
+    return String(b.archiveLe||"").localeCompare(String(a.archiveLe||""))||String(a.client).localeCompare(String(b.client));
+  });
+  var tot={prev:0,passe:0,n:0};
+  liste.forEach(function(d){
+    var r=rentabDe(d);
+    if(r){tot.prev+=r.prev;tot.passe+=r.passe;tot.n++;}
+  });
+  function libelle(v){
+    if(v>0.001)return "Marge de "+heuresTexte(v);
+    if(v<-0.001)return "Dépassement de "+heuresTexte(-v);
+    return "À l’équilibre";
+  }
+  function couleur(v){return v>0?"var(--green)":(v<0?"var(--warn)":"var(--muted)");}
+  var etat="<p><strong>"+liste.length+" dossier"+(liste.length>1?"s":"")+" archivé"+(liste.length>1?"s":"")+"</strong>";
+  if(tot.n)etat+=" — prévu : "+heuresTexte(tot.prev)+" · passé : "+heuresTexte(tot.passe)
+    +" · <strong style=\"color:"+couleur(tot.prev-tot.passe)+"\">"+libelle(tot.prev-tot.passe)+"</strong>";
+  etat+="</p><p class=\"sub\">Un dossier archivé ne figure plus ni dans « Mes dossiers », ni dans « Ma journée », ni dans la charge et le planning, ni dans les heures à saisir. Son suivi reste consultable ici.</p>";
+  $("#archEtat").innerHTML=etat;
+  if(!liste.length){
+    $("#archListe").innerHTML='<p class="sub">Aucun dossier archivé pour l’instant. Le bouton « Archiver » se trouve sur chaque dossier et dans sa fiche.</p>';
+    return;
+  }
+  $("#archListe").innerHTML=liste.map(function(d){
+    var r=rentabDe(d),fait=realiseParDe(d);
+    return '<article class="doss" data-id="'+esc(d.id)+'"><div class="row between">'
+      +'<span class="tag greytag">Archivé'+(d.archiveLe?" le "+frDateCourt(d.archiveLe):"")+'</span>'
+      +'<span class="sub">Devis '+esc(String(d.statut||"?").toLowerCase())+'</span></div>'
+      +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+(montantTexte(d.montant)?" · "+montantTexte(d.montant):"")+'</div>'
+      +'<div class="sub" style="margin-top:6px">Réalisé par : '+(fait?esc(fait.nom)+(fait.source==="planning"?' <span class="sub">(d’après le planning)</span>':""):"à renseigner")+'</div>'
+      +(r?'<p style="margin:8px 0 0;font-size:22px;font-weight:700;color:'+couleur(r.diff)+'">'+libelle(r.diff)+'</p>'
+          +'<div class="sub" style="margin-top:2px">Prévu : <strong>'+heuresTexte(r.prev)+'</strong> · Passé : <strong>'+heuresTexte(r.passe)+'</strong></div>'
+        :'<div class="sub" style="margin-top:6px">Heures prévues ou temps passé manquant : la marge ne peut pas être calculée.</div>')
+      +(d.commentaire?'<div class="sub" style="margin-top:6px"><strong>Commentaire :</strong> '+esc(d.commentaire)+'</div>':"")
+      +'<div class="row" style="margin-top:10px"><button type="button" data-ouvre="'+esc(d.id)+'">Ouvrir le dossier</button>'
+      +'<button type="button" data-desarchive="'+esc(d.id)+'">Sortir des archives</button></div></article>';
+  }).join("");
+  Array.prototype.forEach.call($("#archListe").querySelectorAll("button[data-ouvre]"),function(b){
+    b.onclick=function(){ouvrirDossier(b.dataset.ouvre);};
+  });
+  Array.prototype.forEach.call($("#archListe").querySelectorAll("button[data-desarchive]"),function(b){
+    b.onclick=function(){archiverDossier(b.dataset.desarchive,false);};
+  });
+}
 function showEcran(nom){
   ecran=nom;
   $("#app").classList.toggle("hide",nom!=="today");
@@ -1430,6 +1556,7 @@ function showEcran(nom){
   $("#charge").classList.toggle("hide",nom!=="charge");
   $("#heures").classList.toggle("hide",nom!=="heures");
   $("#rentabilite").classList.toggle("hide",nom!=="rentabilite");
+  $("#archives").classList.toggle("hide",nom!=="archives");
   Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){
     b.classList.toggle("primary",b.dataset.s===nom);
     b.setAttribute("aria-current",b.dataset.s===nom?"page":"false");
@@ -1438,6 +1565,7 @@ function showEcran(nom){
   if(nom==="charge"){remplirEquipe();renderCharge();}
   if(nom==="heures")renderHeures();
   if(nom==="rentabilite")renderRentabilite();
+  if(nom==="archives")renderArchives();
   window.scrollTo({top:0,behavior:"smooth"});
 }
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
