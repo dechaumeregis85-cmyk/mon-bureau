@@ -79,7 +79,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <button type="button" data-s="today" class="primary">Ma journée</button>
     <button type="button" data-s="dossiers">Mes dossiers</button>
     <button type="button" data-s="charge">Charge et planning</button>
-    <button type="button" data-s="heures">Heures et écarts</button>
+    <button type="button" data-s="heures">Heures des chantiers</button>
   </nav>
 
   <section id="intro" class="card">
@@ -164,16 +164,17 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
 
   <section id="heures" class="hide">
     <div class="card">
-      <h2 style="margin-top:0">Import des heures</h2>
-      <p class="sub">Choisis le fichier « HEURES CHANTIERS » du dossier partagé. Il n’est pas modifié : l’application ne fait que le lire.</p>
+      <h2 style="margin-top:0">Heures des chantiers</h2>
+      <div id="heuresEtat"><p class="sub">Aucun dossier accepté pour l’instant.</p></div>
+      <div id="heuresMsg" class="msg hide" role="alert"></div>
+      <div id="heuresListe"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Importer le fichier des heures</h2>
+      <p class="sub">Conservé pour plus tard : le fichier n’est pas utilisé dans les calculs pour l’instant. Choisis « HEURES CHANTIERS » du dossier partagé — il n’est jamais modifié, l’application ne fait que le lire.</p>
       <label for="fichier">Fichier Excel des heures</label>
       <input id="fichier" type="file" accept=".xlsx,.xlsm">
       <div id="importMsg" class="msg hide" role="alert"></div>
-    </div>
-    <div class="card">
-      <h2 style="margin-top:0">Écarts par chantier</h2>
-      <div id="heuresEtat"><p class="sub">Aucun import pour l’instant.</p></div>
-      <div id="heuresListe"></div>
     </div>
   </section>
 </main>
@@ -199,7 +200,7 @@ var data={version:1,tasks:[]},dossiers=[],ecran="today",filter="todo",token=null
 var reglages={equipe:{permanents:5,renforts:0,heuresLunJeu:8,heuresVen:7},conges:[]};
 var totalHeures={},importInfo=null;
 
-var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg"};
+var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg","heures":"#heuresMsg"};
 function showMsg(kind,txt,target){
   var e=$(target||MSGS.top);
   e.textContent=txt;
@@ -208,7 +209,7 @@ function showMsg(kind,txt,target){
 }
 function fail(m,target){showMsg("err",m,target);}
 function clearMsgs(){
-  ["#err","#formmsg","#listmsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
+  ["#err","#formmsg","#listmsg","#heuresMsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
 }
 function ok(m,target){showMsg("ok",m,target);}
 function b64url(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
@@ -502,7 +503,7 @@ function champDossier(d){
     +'</div>'
     +'<div class="grid" style="margin-top:10px">'
     +'<div><label for="fh">Heures prévues (devis Codial)</label><input id="fh" type="number" step="0.5" min="0" placeholder="à compléter" value="'+(d.heures==null?"":d.heures)+'"></div>'
-    +'<div></div>'
+    +'<div><label for="ftp">Temps passé (h)</label><input id="ftp" type="number" step="0.5" min="0" placeholder="à remplir" value="'+(tempsPasseDe(d)==null?"":tempsPasseDe(d))+'"></div>'
     +'</div>'
     +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
     +'<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">'
@@ -531,6 +532,7 @@ function lireChamps(base){
   d.datePromise=$("#fp").value||null;
   d.anticipation=Number($("#fa").value||3);
   d.heures=$("#fh").value===""?null:Number($("#fh").value);
+  if($("#ftp"))d.tempsPasse=$("#ftp").value===""?null:Number($("#ftp").value);
   d.relanceFaite=$("#fr").checked?"Oui":"";
   var c=$("#fcom"),cp=$("#fcomprev"),cd=$("#fcomdelai"),cr=$("#fcomrecue");
   if(c&&cp&&cd&&cr){
@@ -626,17 +628,9 @@ function ouvrirDossier(id){
       +'</div>'
     +(function(){
       var ac=alerteCommande(d);
-      var rappel=ac?'<div class="msg err" style="margin:0 0 12px">'+esc(ac.code)+" — matériel commandé le "+frDateCourt((d.commande||{}).faite||"")+(ac.echeance?" (prévu le "+frDateCourt(ac.echeance)+")":"")+'</div>':"";
-      var li=chantierDuDossier(d.id);
-      if(!li)return rappel;
-      var passe=li.donnees.heures;
-      var prev=d.heures==null||d.heures===""?null:Number(d.heures);
-      var ecart=prev==null?null:passe-prev;
-      return rappel+'<div class="card" style="margin:0 0 12px;padding:12px;background:#f7f9f5">'
-        +'<p style="margin:0 0 6px"><strong>Heures du chantier '+esc(li.cle)+'</strong></p>'
-        +'<p class="sub" style="margin:0">Réalisées (import) : '+heuresTexte(passe)+(prev!=null?" · prévues au devis : "+heuresTexte(prev):"")+'</p>'
-        +(ecart!=null?'<p class="sub" style="margin:6px 0 0">'+(ecart>0.5?"<strong>Dépassement de "+heuresTexte(ecart)+"</strong>":ecart<-0.5?"Marge de "+heuresTexte(-ecart)+" sur le budget":"Budget respecté")+'</p>':"")
-        +'</div>';
+      /* Les écarts par chantier sont suspendus : les heures du fichier importé ne sont plus affichées.
+         Le suivi repose sur « Heures prévues » et « Temps passé », saisis à la main. */
+      return ac?'<div class="msg err" style="margin:0 0 12px">'+esc(ac.code)+" — matériel commandé le "+frDateCourt((d.commande||{}).faite||"")+(ac.echeance?" (prévu le "+frDateCourt(ac.echeance)+")":"")+'</div>':"";
     })()
     +"<h3 style=\"font-size:18px\">Actions liées</h3>";
   html+=lignes.length?lignes.map(function(t){
@@ -1261,7 +1255,7 @@ function importerFichier(file){
         total:cles.reduce(function(s,c){return s+res.chantiers[c].heures;},0)};
       saveHeures().then(function(){
         msg.className="msg okmsg";
-        msg.textContent="Import terminé : "+cles.length+" chantiers, "+heuresTexte(importInfo.total)+" au total, mois lus : "+(res.mois[0]||"")+" → "+(res.mois[res.mois.length-1]||"")+".";
+        msg.textContent="Fichier lu et conservé : "+cles.length+" chantiers, "+heuresTexte(importInfo.total)+" au total, mois lus : "+(res.mois[0]||"")+" → "+(res.mois[res.mois.length-1]||"")+". Il n’est pas utilisé dans les calculs pour l’instant.";
         renderHeures();
       }).catch(function(err){msg.className="msg err";msg.textContent=String(err.message);});
     }catch(err){
@@ -1292,42 +1286,64 @@ function dossierDeChantier(cle){
   if(!corr)return null;
   return dossiers.filter(function(d){return d.id===corr;})[0]||null;
 }
+function tempsPasseDe(d){
+  var v=d?d.tempsPasse:null;
+  return (v==null||v==="")?null:Number(v);
+}
 function renderHeures(){
+  /* Écran « Heures des chantiers » : dossiers acceptés, heures prévues du devis et temps passé saisi à la main.
+     Aucun écart calculé pour l’instant ; les heures du fichier importé ne sont pas utilisées. */
   if(!$("#heuresListe"))return;
-  var cles=Object.keys(totalHeures||{});
-  if(!importInfo||!cles.length){
-    $("#heuresEtat").innerHTML='<p class="sub">Aucun import pour l’instant. Quand tu auras importé le fichier, chaque chantier apparaîtra ici avec ses heures prévues et passées.</p>';
-    $("#heuresListe").innerHTML="";
+  var ch=chargeAcceptee().slice().sort(function(a,b){
+    return String(a.debutPrevu||echeanceDe(a)||"9999").localeCompare(String(b.debutPrevu||echeanceDe(b)||"9999"))
+      ||String(a.client).localeCompare(String(b.client));
+  });
+  var avecHeures=ch.filter(function(d){return d.heures!=null&&d.heures!=="";});
+  var prevu=avecHeures.reduce(function(s,d){return s+Number(d.heures||0);},0);
+  var saisis=ch.filter(function(d){return tempsPasseDe(d)!=null;});
+  var passe=saisis.reduce(function(s,d){return s+tempsPasseDe(d);},0);
+  var manquants=ch.length-saisis.length;
+  var etat="<p><strong>"+ch.length+" chantier"+(ch.length>1?"s":"")+" accepté"+(ch.length>1?"s":"")+"</strong> — heures prévues : <strong>"+heuresTexte(avecHeures.length?prevu:null)+"</strong>";
+  if(avecHeures.length!==ch.length)etat+=' <span class="sub">(heures saisies sur '+avecHeures.length+" chantier"+(avecHeures.length>1?"s":"")+")</span>";
+  etat+="</p><p>Temps passé saisi : <strong>"+(saisis.length?heuresTexte(passe):"0 h")+"</strong>"
+    +(saisis.length?" sur "+saisis.length+" chantier"+(saisis.length>1?"s":""):"")
+    +(manquants?" — "+manquants+" chantier"+(manquants>1?"s":"")+" encore à renseigner":"")+"</p>";
+  etat+='<p class="sub">Aucun écart n’est calculé pour l’instant : le fichier importé n’est pas utilisé.</p>';
+  $("#heuresEtat").innerHTML=etat;
+  if(!ch.length){
+    $("#heuresListe").innerHTML='<p class="sub">Aucun dossier accepté. Un devis passe en « Accepté » depuis l’écran « Mes dossiers ».</p>';
     return;
   }
-  var d=new Date(importInfo.le);
-  $("#heuresEtat").innerHTML="<p>Dernier import : <strong>"+d.toLocaleString("fr-FR")+"</strong> · "+importInfo.nb+" chantiers · "+heuresTexte(importInfo.total)+"</p>"
-    +'<p class="sub">Mois lus : '+(importInfo.mois[0]||"")+" → "+(importInfo.mois[importInfo.mois.length-1]||"")+". Les heures sont hebdomadaires : le dernier mois peut être incomplet.</p>";
-  cles.sort(function(a,b){return totalHeures[b].heures-totalHeures[a].heures;});
-  var lignes=cles.map(function(cle){
-    var ch=totalHeures[cle];
-    var doss=dossierDeChantier(cle);
-    var prev=doss&&doss.heures!=null&&doss.heures!==""?Number(doss.heures):null;
-    var ecart=prev==null?null:ch.heures-prev;
-    var etat=prev==null?'<span class="tag wait">Heures devis à saisir</span>'
-      :(ecart>0.5?'<span class="tag urgent">Dépassement '+heuresTexte(ecart)+'</span>'
-      :'<span class="tag oktag">Dans le budget ('+(ecart<=0?"+":"")+heuresTexte(-ecart)+')</span>');
-    var options='<option value="">— non rapproché —</option>'+dossiers.map(function(x){
-      return'<option value="'+x.id+'"'+(doss&&doss.id===x.id?" selected":"")+">"+esc(x.client)+"</option>";
-    }).join("");
-    return '<article class="doss" data-cle="'+esc(cle)+'"><div class="row between"><span class="sub">Chantier '+esc(cle)+'</span>'+etat+'</div>'
-      +'<h3>'+esc(ch.nom)+'</h3>'
-      +'<div class="sub">Passées : <strong>'+heuresTexte(ch.heures)+'</strong>'+(prev!=null?" · prévues : "+heuresTexte(prev):"")+'</div>'
-      +'<div style="margin-top:10px"><label for="c'+esc(cle)+'">Dossier associé</label><select class="corr" data-cle="'+esc(cle)+'" id="c'+esc(cle)+'">'+options+"</select></div>"
-      +'</article>';
+  $("#heuresListe").innerHTML=ch.map(function(d){
+    var prev=d.heures==null||d.heures===""?null:Number(d.heures);
+    var tp=tempsPasseDe(d);
+    return '<article class="doss" data-id="'+esc(d.id)+'"><div class="row between"><span class="tag '+(prev==null?"wait":"oktag")+'">'
+      +(prev==null?"Heures prévues à saisir":"Prévues : "+heuresTexte(prev))+'</span>'
+      +(d.debutPrevu?'<span class="sub">du '+frDateCourt(d.debutPrevu)+" au "+frDateCourt(finreelle(d))+'</span>':'<span class="sub">pas encore positionné</span>')+'</div>'
+      +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")
+      +(intervenantsDe(d).length?" · "+esc(intervenantsDe(d).map(nomMembre).join(", ")):"")+'</div>'
+      +'<div style="margin-top:10px;max-width:280px"><label for="tp'+esc(d.id)+'">Temps passé (h)</label>'
+      +'<input class="tp" id="tp'+esc(d.id)+'" data-id="'+esc(d.id)+'" type="number" step="0.5" min="0" placeholder="à remplir" value="'+(tp==null?"":tp)+'"></div>'
+      +'<div class="row" style="margin-top:10px"><button type="button" data-ouvre="'+esc(d.id)+'">Ouvrir le dossier</button></div></article>';
   }).join("");
-  $("#heuresListe").innerHTML=lignes;
-  Array.prototype.forEach.call($("#heuresListe").querySelectorAll("select"),function(s){
-    s.onchange=function(){
-      reglages.correspondances=reglages.correspondances||{};
-      if(s.value)reglages.correspondances[s.dataset.cle]=s.value;
-      else delete reglages.correspondances[s.dataset.cle];
-      saveReglages().then(function(){renderHeures();}).catch(function(e){fail(String(e.message));});
+  Array.prototype.forEach.call($("#heuresListe").querySelectorAll("button[data-ouvre]"),function(b){
+    b.onclick=function(){ouvrirDossier(b.dataset.ouvre);};
+  });
+  Array.prototype.forEach.call($("#heuresListe").querySelectorAll("input.tp"),function(i){
+    i.onchange=function(){
+      var id=i.dataset.id;
+      var cible=dossiers.filter(function(x){return x.id===id;})[0];
+      if(!cible)return;
+      if(i.value!==""&&!(Number(i.value)>=0)){
+        fail("Le temps passé doit être un nombre d’heures.",MSGS.heures);
+        i.value=tempsPasseDe(cible)==null?"":tempsPasseDe(cible);
+        return;
+      }
+      var v=i.value===""?null:Number(i.value);
+      if(tempsPasseDe(cible)===v)return;
+      saveDossiers(function(liste){liste.forEach(function(x){if(x.id===id)x.tempsPasse=v;});})
+        .then(function(){ok("Temps passé "+(v==null?"effacé":heuresTexte(v))+" pour "+cible.client+".",MSGS.heures);})
+        .catch(function(e){fail(String(e.message),MSGS.heures);});
     };
   });
 }
