@@ -80,6 +80,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <button type="button" data-s="dossiers">Mes dossiers</button>
     <button type="button" data-s="charge">Charge et planning</button>
     <button type="button" data-s="heures">Heures des chantiers</button>
+    <button type="button" data-s="rentabilite">Rentabilité</button>
   </nav>
 
   <section id="intro" class="card">
@@ -177,6 +178,15 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <div id="importMsg" class="msg hide" role="alert"></div>
     </div>
   </section>
+
+  <section id="rentabilite" class="hide">
+    <div class="card">
+      <h2 style="margin-top:0">Rentabilité — prévu moins passé</h2>
+      <div id="rentabEtat"><p class="sub">Aucun dossier à calculer pour l’instant.</p></div>
+      <div id="rentabMsg" class="msg hide" role="alert"></div>
+      <div id="rentabListe"></div>
+    </div>
+  </section>
 </main>
 <footer>Mon Bureau — interface hébergée, données sur OneDrive</footer>
 
@@ -200,7 +210,7 @@ var data={version:1,tasks:[]},dossiers=[],ecran="today",filter="todo",token=null
 var reglages={equipe:{permanents:5,renforts:0,heuresLunJeu:8,heuresVen:7},conges:[]};
 var totalHeures={},importInfo=null;
 
-var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg","heures":"#heuresMsg"};
+var MSGS={"top":"#err","form":"#formmsg","list":"#listmsg","heures":"#heuresMsg","rentab":"#rentabMsg"};
 function showMsg(kind,txt,target){
   var e=$(target||MSGS.top);
   e.textContent=txt;
@@ -209,7 +219,7 @@ function showMsg(kind,txt,target){
 }
 function fail(m,target){showMsg("err",m,target);}
 function clearMsgs(){
-  ["#err","#formmsg","#listmsg","#heuresMsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
+  ["#err","#formmsg","#listmsg","#heuresMsg","#rentabMsg"].forEach(function(s){var e=$(s);if(e){e.className="msg hide";e.textContent="";}});
 }
 function ok(m,target){showMsg("ok",m,target);}
 function b64url(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
@@ -448,7 +458,7 @@ function saveDossiers(modifier){
     var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
     modifier(paquet.dossiers);
     return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
-      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();});
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();renderRentabilite();});
   });
 }
 var filtreCivilite=false;
@@ -505,6 +515,7 @@ function champDossier(d){
     +'<div><label for="fh">Heures prévues (devis Codial)</label><input id="fh" type="number" step="0.5" min="0" placeholder="à compléter" value="'+(d.heures==null?"":d.heures)+'"></div>'
     +'<div><label for="ftp">Temps passé (h)</label><input id="ftp" type="number" step="0.5" min="0" placeholder="à remplir" value="'+(tempsPasseDe(d)==null?"":tempsPasseDe(d))+'"></div>'
     +'</div>'
+    +'<div style="margin-top:10px"><label for="fcmt">Commentaire</label><input id="fcmt" type="text" maxlength="200" placeholder="à remplir" value="'+esc(d.commentaire||"")+'"></div>'
     +'<label class="chk"><input id="fr" type="checkbox"'+(d.relanceFaite==="Oui"?" checked":"")+"> Relance déjà effectuée</label>"
     +'<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">'
     +'<p class="sub" style="margin:0 0 8px"><strong>Commande de matériel</strong></p>'
@@ -533,6 +544,7 @@ function lireChamps(base){
   d.anticipation=Number($("#fa").value||3);
   d.heures=$("#fh").value===""?null:Number($("#fh").value);
   if($("#ftp"))d.tempsPasse=$("#ftp").value===""?null:Number($("#ftp").value);
+  if($("#fcmt"))d.commentaire=$("#fcmt").value.trim();
   d.relanceFaite=$("#fr").checked?"Oui":"";
   var c=$("#fcom"),cp=$("#fcomprev"),cd=$("#fcomdelai"),cr=$("#fcomrecue");
   if(c&&cp&&cd&&cr){
@@ -1347,12 +1359,77 @@ function renderHeures(){
     };
   });
 }
+function rentabDe(d){
+  /* Rentabilité = heures prévues (devis) − temps passé saisi. null si l’un des deux manque. */
+  var prev=d.heures==null||d.heures===""?null:Number(d.heures);
+  var passe=tempsPasseDe(d);
+  if(prev==null||passe==null)return null;
+  return {prev:prev,passe:passe,diff:prev-passe};
+}
+function renderRentabilite(){
+  if(!$("#rentabListe"))return;
+  var calculables=[],incomplets=0;
+  dossiers.forEach(function(d){
+    var r=rentabDe(d);
+    if(r){calculables.push({d:d,prev:r.prev,passe:r.passe,diff:r.diff});return;}
+    if((d.heures!=null&&d.heures!=="")||tempsPasseDe(d)!=null)incomplets++;
+  });
+  /* les dépassements d’abord (différence la plus négative en tête) */
+  calculables.sort(function(a,b){return a.diff-b.diff||String(a.d.client).localeCompare(String(b.d.client));});
+  var tPrev=calculables.reduce(function(s,x){return s+x.prev;},0);
+  var tPasse=calculables.reduce(function(s,x){return s+x.passe;},0);
+  var tDiff=tPrev-tPasse;
+  function couleur(v){return v>0?"var(--green)":(v<0?"var(--warn)":"var(--muted)");}
+  function libelle(v){
+    if(v>0.001)return "Marge de "+heuresTexte(v);
+    if(v<-0.001)return "Dépassement de "+heuresTexte(-v);
+    return "À l’équilibre";
+  }
+  function signe(v){return (v>0?"+":(v<0?"−":""))+heuresTexte(Math.abs(v));}
+  var etat="<p><strong>"+calculables.length+" chantier"+(calculables.length>1?"s":"")+" calculé"+(calculables.length>1?"s":"")+"</strong> — prévu : "+heuresTexte(calculables.length?tPrev:null)
+    +" · passé : "+heuresTexte(calculables.length?tPasse:null)+" · <strong style=\"color:"+couleur(tDiff)+"\">"+libelle(tDiff)+"</strong></p>";
+  etat+='<p class="sub">Rentabilité = heures prévues au devis − temps passé. Vert si le résultat est positif (il reste du temps sur le budget), rouge s’il est négatif.</p>';
+  if(incomplets)etat+='<p class="sub">'+incomplets+" dossier"+(incomplets>1?"s":"")+" avec seulement des heures prévues ou seulement un temps passé : il manque l’une des deux valeurs pour calculer.</p>";
+  $("#rentabEtat").innerHTML=etat;
+  if(!calculables.length){
+    $("#rentabListe").innerHTML='<p class="sub">Rien à calculer pour l’instant. Renseigne les heures prévues et le temps passé d’un dossier : il apparaîtra ici.</p>';
+    return;
+  }
+  $("#rentabListe").innerHTML=calculables.map(function(x){
+    var d=x.d;
+    return '<article class="doss" data-id="'+esc(d.id)+'"><div class="row between">'
+      +'<span class="tag '+(x.diff>0.001?"oktag":(x.diff<-0.001?"urgent":"greytag"))+'">'+libelle(x.diff)+'</span>'
+      +'<span class="sub">Devis '+esc(d.statut||"?")+'</span></div>'
+      +'<h3>'+esc(d.client)+'</h3><div class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</div>'
+      +'<p style="margin:10px 0 0;font-size:24px;font-weight:700;color:'+couleur(x.diff)+'">'+signe(x.diff)+'</p>'
+      +'<div class="sub" style="margin-top:2px">Prévu : <strong>'+heuresTexte(x.prev)+'</strong> · Passé : <strong>'+heuresTexte(x.passe)+'</strong></div>'
+      +'<div style="margin-top:10px"><label for="cm'+esc(d.id)+'">Commentaire</label>'
+      +'<input class="cm" id="cm'+esc(d.id)+'" data-id="'+esc(d.id)+'" type="text" maxlength="200" placeholder="à remplir" value="'+esc(d.commentaire||"")+'"></div>'
+      +'<div class="row" style="margin-top:10px"><button type="button" data-ouvre="'+esc(d.id)+'">Ouvrir le dossier</button></div></article>';
+  }).join("");
+  Array.prototype.forEach.call($("#rentabListe").querySelectorAll("button[data-ouvre]"),function(b){
+    b.onclick=function(){ouvrirDossier(b.dataset.ouvre);};
+  });
+  Array.prototype.forEach.call($("#rentabListe").querySelectorAll("input.cm"),function(i){
+    i.onchange=function(){
+      var id=i.dataset.id;
+      var cible=dossiers.filter(function(x){return x.id===id;})[0];
+      if(!cible)return;
+      var v=i.value.trim();
+      if((cible.commentaire||"")===v)return;
+      saveDossiers(function(liste){liste.forEach(function(x){if(x.id===id)x.commentaire=v;});})
+        .then(function(){ok("Commentaire enregistré pour "+cible.client+".",MSGS.rentab);})
+        .catch(function(e){fail(String(e.message),MSGS.rentab);});
+    };
+  });
+}
 function showEcran(nom){
   ecran=nom;
   $("#app").classList.toggle("hide",nom!=="today");
   $("#dossiers").classList.toggle("hide",nom!=="dossiers");
   $("#charge").classList.toggle("hide",nom!=="charge");
   $("#heures").classList.toggle("hide",nom!=="heures");
+  $("#rentabilite").classList.toggle("hide",nom!=="rentabilite");
   Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){
     b.classList.toggle("primary",b.dataset.s===nom);
     b.setAttribute("aria-current",b.dataset.s===nom?"page":"false");
@@ -1360,6 +1437,7 @@ function showEcran(nom){
   if(nom==="dossiers")renderDossiers();
   if(nom==="charge"){remplirEquipe();renderCharge();}
   if(nom==="heures")renderHeures();
+  if(nom==="rentabilite")renderRentabilite();
   window.scrollTo({top:0,behavior:"smooth"});
 }
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
