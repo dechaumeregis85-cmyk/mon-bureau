@@ -48,6 +48,12 @@ input,select{min-height:50px;border:1px solid #99aaa1;border-radius:6px;padding:
 .table-wrap{overflow:auto}
 #planningGrille table{border-collapse:collapse;white-space:nowrap;width:100%}
 #planningGrille th,#planningGrille td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;font-size:16px}
+#tabListe table{border-collapse:collapse;width:100%}
+#tabListe th,#tabListe td{border-bottom:1px solid var(--line);padding:10px;text-align:left;font-size:16px}
+#tabListe td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+#tabListe tfoot td{font-weight:700;border-top:2px solid var(--line)}
+.ligne-ok{background:#dcefe2}
+.ligne-dep{background:#fce5d9}
 .sub{font-size:16px;color:var(--muted)}
 .tabs button[aria-pressed=true]{background:#dcebe1;border-color:var(--green)}
 .actions button{font-size:16px}
@@ -81,6 +87,7 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
     <button type="button" data-s="charge">Charge et planning</button>
     <button type="button" data-s="heures">Heures des chantiers</button>
     <button type="button" data-s="rentabilite">Rentabilité</button>
+    <button type="button" data-s="tableau">Tableau rentabilité</button>
     <button type="button" data-s="archives">Archives</button>
   </nav>
 
@@ -187,6 +194,14 @@ footer{font-size:14px;color:var(--muted);text-align:center;padding:8px 0 26px}
       <div id="rentabEtat"><p class="sub">Aucun dossier à calculer pour l’instant.</p></div>
       <div id="rentabMsg" class="msg hide" role="alert"></div>
       <div id="rentabListe"></div>
+    </div>
+  </section>
+
+  <section id="tableau" class="hide">
+    <div class="card">
+      <h2 style="margin-top:0">Tableau rentabilité</h2>
+      <div id="tabEtat"><p class="sub">Aucun dossier à afficher pour l’instant.</p></div>
+      <div id="tabListe"></div>
     </div>
   </section>
 
@@ -470,7 +485,7 @@ function saveDossiers(modifier){
     var paquet=(j&&Array.isArray(j.dossiers))?j:{version:1,dossiers:[]};
     modifier(paquet.dossiers);
     return api(DOSSPATH+":/content",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(paquet)})
-      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();renderRentabilite();renderArchives();});
+      .then(function(){dossiers=paquet.dossiers;renderDossiers();renderCharge();renderDevisJour();renderHeures();renderRentabilite();renderArchives();renderTableau();});
   });
 }
 function archiverDossier(id,oui){
@@ -1549,6 +1564,40 @@ function renderArchives(){
     b.onclick=function(){archiverDossier(b.dataset.desarchive,false);};
   });
 }
+function renderTableau(){
+  /* Tableau simple : tous les dossiers, heures prévues et heures passées.
+     Ligne verte si prévu > passé, rouge si passé > prévu, sans couleur si l’un des deux manque. */
+  if(!$("#tabListe"))return;
+  var liste=dossiers.slice().sort(function(a,b){
+    return String(a.client||"").localeCompare(String(b.client||""),"fr",{sensitivity:"base"});
+  });
+  var avec=0,rouges=0,verts=0,tPrev=0,tPasse=0;
+  liste.forEach(function(d){
+    var r=rentabDe(d);
+    if(!r)return;
+    avec++;tPrev+=r.prev;tPasse+=r.passe;
+    if(r.diff<-0.001)rouges++;else if(r.diff>0.001)verts++;
+  });
+  $("#tabEtat").innerHTML="<p><strong>"+liste.length+" dossier"+(liste.length>1?"s":"")+"</strong> — "+avec+" avec les deux valeurs"
+    +" · <span class=\"tag urgent\">"+rouges+" en rouge</span> <span class=\"tag oktag\">"+verts+" en vert</span></p>"
+    +'<p class="sub">Ligne verte : heures prévues plus importantes que les heures passées. Ligne rouge : heures passées plus importantes que les heures prévues. Les dossiers incomplets restent sans couleur.</p>';
+  if(!liste.length){
+    $("#tabListe").innerHTML="";
+    return;
+  }
+  var corps=liste.map(function(d){
+    var r=rentabDe(d);
+    var classe=!r?"":(r.diff<-0.001?"ligne-dep":(r.diff>0.001?"ligne-ok":""));
+    return '<tr class="'+classe+'" data-id="'+esc(d.id)+'"><td>'+esc(d.client)
+      +(estArchive(d)?' <span class="tag greytag">archivé</span>':"")
+      +'<br><span class="sub">'+esc(d.travaux||"—")+(d.commune?" · "+esc(d.commune):"")+'</span></td>'
+      +'<td class="n">'+(r?heuresTexte(r.prev):'<span class="sub">—</span>')+'</td>'
+      +'<td class="n">'+(r?heuresTexte(r.passe):'<span class="sub">—</span>')+'</td></tr>';
+  }).join("");
+  var pied='<tfoot><tr><td>Total ('+avec+' dossier'+(avec>1?"s":"")+' calculé'+(avec>1?"s":"")+')</td><td class="n">'+(avec?heuresTexte(tPrev):"—")+'</td><td class="n">'+(avec?heuresTexte(tPasse):"—")+'</td></tr></tfoot>';
+  $("#tabListe").innerHTML='<div class="table-wrap"><table><thead><tr><th>Dossier</th><th class="n">Heures prévues</th><th class="n">Heures passées</th></tr></thead><tbody>'
+    +corps+"</tbody>"+pied+"</table></div>";
+}
 function showEcran(nom){
   ecran=nom;
   $("#app").classList.toggle("hide",nom!=="today");
@@ -1557,6 +1606,7 @@ function showEcran(nom){
   $("#heures").classList.toggle("hide",nom!=="heures");
   $("#rentabilite").classList.toggle("hide",nom!=="rentabilite");
   $("#archives").classList.toggle("hide",nom!=="archives");
+  $("#tableau").classList.toggle("hide",nom!=="tableau");
   Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){
     b.classList.toggle("primary",b.dataset.s===nom);
     b.setAttribute("aria-current",b.dataset.s===nom?"page":"false");
@@ -1566,6 +1616,7 @@ function showEcran(nom){
   if(nom==="heures")renderHeures();
   if(nom==="rentabilite")renderRentabilite();
   if(nom==="archives")renderArchives();
+  if(nom==="tableau")renderTableau();
   window.scrollTo({top:0,behavior:"smooth"});
 }
 Array.prototype.forEach.call($("#nav").querySelectorAll("button"),function(b){b.onclick=function(){showEcran(b.dataset.s);};});
