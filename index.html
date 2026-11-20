@@ -1566,10 +1566,10 @@ function renderArchives(){
   });
 }
 function renderTableau(){
-  /* Tableau simple : tous les dossiers SAUF les devis refusés, heures prévues et heures passées.
+  /* Tableau simple : seulement les devis acceptés, heures prévues et heures passées.
      Ligne verte si prévu > passé, rouge si passé > prévu, sans couleur si l’un des deux manque. */
   if(!$("#tabListe"))return;
-  var liste=dossiers.filter(function(d){return d.statut!=="Refusé";}).sort(function(a,b){
+  var liste=dossiers.filter(function(d){return d.statut==="Accepté";}).sort(function(a,b){
     return String(a.client||"").localeCompare(String(b.client||""),"fr",{sensitivity:"base"});
   });
   var avec=0,rouges=0,verts=0,tPrev=0,tPasse=0;
@@ -1579,11 +1579,11 @@ function renderTableau(){
     avec++;tPrev+=r.prev;tPasse+=r.passe;
     if(r.diff<-0.001)rouges++;else if(r.diff>0.001)verts++;
   });
-  $("#tabEtat").innerHTML="<p><strong>"+liste.length+" dossier"+(liste.length>1?"s":"")+"</strong> — "+avec+" avec les deux valeurs"
+  $("#tabEtat").innerHTML="<p><strong>"+liste.length+" chantier"+(liste.length>1?"s":"")+" accepté"+(liste.length>1?"s":"")+"</strong> — "+avec+" avec les deux valeurs"
     +" · <span class=\"tag urgent\">"+rouges+" en rouge</span> <span class=\"tag oktag\">"+verts+" en vert</span></p>"
-    +'<p class="sub">Les devis refusés ne figurent pas dans ce tableau. Ligne verte : heures prévues plus importantes que les heures passées. Ligne rouge : heures passées plus importantes que les heures prévues. Les dossiers incomplets restent sans couleur.</p>';
+    +'<p class="sub">Seuls les dossiers acceptés figurent dans ce tableau. Ligne verte : heures prévues plus importantes que les heures passées. Ligne rouge : heures passées plus importantes que les heures prévues. Les chantiers incomplets restent sans couleur.</p>';
   if(!liste.length){
-    $("#tabListe").innerHTML="";
+    $("#tabListe").innerHTML='<p class="sub">Aucun dossier accepté pour l’instant.</p>';
     return;
   }
   var corps=liste.map(function(d){
