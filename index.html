@@ -856,7 +856,8 @@ function nouveauDossier(){
     +'<div class="champ"><label for="nco">Commune</label><input id="nco" list="communeSuggestions" autocomplete="off" placeholder="CP ou commune"><datalist id="communeSuggestions">'+suggestionsDossier("commune")+'</datalist><div id="communeChoix" class="choix hide"></div></div></div>'
     +'<div class="grid" style="margin-top:10px"><div><label for="nr">Date du rendez-vous</label><input id="nr" type="date" value="'+today()+'"></div>'
     +'<div><label for="nem">E-mail client</label><input id="nem" type="email" placeholder="optionnel"></div></div>'
-    +'<p class="sub">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous, sauf date promise.</p>'
+    +'<div class="grid" style="margin-top:10px;grid-template-columns:1fr 1fr"><div><label for="np">Date promise (client)</label><input id="np" type="date" aria-describedby="nnote"></div><div></div></div>'
+    +'<p class="sub" id="nnote">Le statut part de « À faire ». L’échéance est calculée à 15 jours du rendez-vous ; si tu indiques une date promise, c’est elle qui compte. La date promise peut aussi être remplie ou modifiée plus tard dans la fiche du dossier.</p>'
     +'<div class="row" style="margin-top:14px"><button class="primary" type="button" id="nok">Créer le dossier</button><button type="button" id="nno">Annuler</button></div>'
     +'<div id="nmsg" class="msg hide" role="alert"></div>';
   $("#dlgbody").innerHTML=html;
@@ -876,7 +877,7 @@ function nouveauDossier(){
     if(!client){msg.className="msg err";msg.textContent="Indique le nom du client.";return;}
     var nouveau={
       id:"d"+Date.now(),client:client,civilite:estSociete(client)?"aucune":($("#nci").value||"aucune"),travaux:$("#nt").value.trim(),commune:$("#nco").value.trim(),
-      email:$("#nem").value.trim(),rdv:$("#nr").value||today(),datePromise:null,statut:"À faire",
+      email:$("#nem").value.trim(),rdv:$("#nr").value||today(),datePromise:($("#np")&&$("#np").value)?$("#np").value:null,statut:"À faire",
       montant:null,envoi:null,relanceFaite:"",delai:7,anticipation:3,source:"application"
     };
     $("#nok").disabled=true;
